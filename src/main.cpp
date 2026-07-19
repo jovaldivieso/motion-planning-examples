@@ -208,11 +208,11 @@ std::vector<SquareObstacle> generateObstacles(const Config &cfg)
 
 std::optional<fs::path> firstExistingPath(const std::vector<fs::path> &candidates)
 {
-    for (const auto &candidate : candidates)
-    {
-        if (!candidate.empty() && fs::exists(candidate)) return candidate;
-    }
-    return std::nullopt;
+    auto it = std::find_if(candidates.begin(), candidates.end(), [](const fs::path& p){
+        return !p.empty() && fs::exists(p);
+    });
+    
+    return (it != candidates.end()) ? std::make_optional(*it) : std::nullopt;
 }
 
 void writeObstacleCsv(const fs::path &path, const std::vector<SquareObstacle> &obstacles)
@@ -247,17 +247,20 @@ void writeCollisionMapCsv(const fs::path &path,
     out << "theta1,theta2,valid\n";
     const double pi = std::acos(-1.0);
 
+    // Allocate heap memory exactly ONCE
+    JointManifoldState manifoldState(4); 
+
     for (int i = 0; i < gridResolution; ++i)
     {
         const double theta1 = -pi + (2.0 * pi * i) / static_cast<double>(gridResolution - 1);
-        const double c1 = std::cos(theta1);
-        const double s1 = std::sin(theta1);
+        manifoldState[0] = std::cos(theta1);
+        manifoldState[1] = std::sin(theta1);
+        
         for (int j = 0; j < gridResolution; ++j)
         {
             const double theta2 = -pi + (2.0 * pi * j) / static_cast<double>(gridResolution - 1);
-            const double c2 = std::cos(theta2);
-            const double s2 = std::sin(theta2);
-            const JointManifoldState manifoldState = {c1, s1, c2, s2};
+            manifoldState[2] = std::cos(theta2);
+            manifoldState[3] = std::sin(theta2);
 
             const bool valid = checker.isManifoldStateValid(manifoldState);
             out << theta1 << ',' << theta2 << ',' << (valid ? 1 : 0) << '\n';
