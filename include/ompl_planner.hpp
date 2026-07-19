@@ -1,5 +1,7 @@
 #pragma once
 
+#include "planner.hpp"
+
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -9,10 +11,7 @@
 #include <ompl/base/ScopedState.h>
 #include <ompl/base/StateSpace.h>
 
-namespace ompl::geometric
-{
-class SimpleSetup;
-}
+namespace ompl::geometric { class SimpleSetup; }
 
 namespace motion_planning_examples
 {
@@ -26,28 +25,25 @@ struct RRTStarSettings
     int pathInterpolationPoints{220};
 };
 
-class OMPLPlanner
+class OMPLPlanner : public Planner
 {
 public:
     explicit OMPLPlanner(std::shared_ptr<ompl::base::StateSpace> space);
 
     void setStateValidityChecker(const std::function<bool(const ompl::base::State *)> &checker);
-    void setStartGoal(double startTheta1, double startTheta2, double goalTheta1, double goalTheta2);
     void configureRRTStar(const RRTStarSettings &settings);
 
-    bool solve(double solveTimeSeconds);
-    
-    void simplifyPath(double maxTime = 1.0);
+    void setStartGoal(double startTheta1, double startTheta2, double goalTheta1, double goalTheta2) override;
+    bool solve(double solveTimeSeconds) override;
+    void simplifyPath(double maxTime = 1.0) override;
 
-    std::vector<std::pair<double, double>> getInterpolatedPath(int interpolationPoints) const;
-    double getPathLength() const;
-    std::size_t getPathStateCount() const;
-
-    std::shared_ptr<ompl::base::StateSpace> getStateSpace() const;
+    [[nodiscard]] std::vector<std::pair<double, double>> getPathAngles() const override;
+    [[nodiscard]] double getPathLength() const override;
 
 private:
     std::shared_ptr<ompl::base::StateSpace> space_;
     std::shared_ptr<ompl::geometric::SimpleSetup> simpleSetup_;
+    int interpolationPoints_{100};
 };
 
 }  // namespace motion_planning_examples

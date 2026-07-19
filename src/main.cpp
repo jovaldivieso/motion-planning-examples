@@ -13,15 +13,19 @@
 #include <ompl/base/StateSpace.h>
 #include <ompl/base/spaces/SO2StateSpace.h>
 
+#include "robot_mechanism.hpp"
 #include "two_dof_planar_arm.hpp"
+#include "planner.hpp"
 #include "ompl_planner.hpp"
 #include "ceres_planner.hpp"
 #include "fcl_collision_checker.hpp"
 
 namespace ob = ompl::base;
 namespace fs = std::filesystem;
+using motion_planning_examples::RobotMechanism;
 using motion_planning_examples::TwoDOFPlanarArm;
 using motion_planning_examples::FCLCollisionChecker;
+using motion_planning_examples::Planner;
 using motion_planning_examples::OMPLPlanner;
 using motion_planning_examples::CeresPlanner;
 using motion_planning_examples::RRTStarSettings;
@@ -290,88 +294,56 @@ int main(int argc, char **argv)
 
     const auto obstacles = generateObstacles(cfg);
 
-    auto planar_arm = std::make_shared<TwoDOFPlanarArm>(
+    // 1. Core Abstractions Instantiated
+    std::shared_ptr<RobotMechanism> robot = std::make_shared<TwoDOFPlanarArm>(
         cfg.link1Length, cfg.link2Length, cfg.linkThickness, cfg.objectHeight);
 
-    auto checker = std::make_shared<FCLCollisionChecker>(planar_arm, cfg.objectHeight, obstacles);
+    auto checker = std::make_shared<FCLCollisionChecker>(robot, cfg.objectHeight, obstacles);
+    std::shared_ptr<Planner> planner;
 
-    std::vector<std::pair<double, double>> pathAngles;
-    double pathLength = 0.0;
-
+    // 2. Polymorphic Architecture routing
     if (cfg.plannerType == "ceres")
     {
-        std::cout << "Using Ceres Straight-Line Planner...\n";
-        
-        // Forward Kinematics to extract Cartesian workspace goals for Ceres
-        double startX = cfg.link1Length * std::cos(cfg.startTheta1) + 
-                        cfg.link2Length * std::cos(cfg.startTheta1 + cfg.startTheta2);
-        double startY = cfg.link1Length * std::sin(cfg.startTheta1) + 
-                        cfg.link2Length * std::sin(cfg.startTheta1 + cfg.startTheta2);
-                        
-        double goalX = cfg.link1Length * std::cos(cfg.goalTheta1) + 
-                       cfg.link2Length * std::cos(cfg.goalTheta1 + cfg.goalTheta2);
-        double goalY = cfg.link1Length * std::sin(cfg.goalTheta1) + 
-                       cfg.link2Length * std::sin(cfg.goalTheta1 + cfg.goalTheta2);
-
-        // Natively pass the elbow hint to Ceres based on the start configuration
-        bool elbowUp = (cfg.startTheta2 >= 0.0);
-
-        CeresPlanner planner(planar_arm, checker, cfg.link1Length, cfg.link2Length, cfg.pathInterpolationPoints);
-        planner.setStartGoalWorkspace(startX, startY, goalX, goalY, elbowUp);
-
-        if (!planner.solve())
-        {
-            std::cout << "Ceres failed to find a valid straight-line trajectory.\n";
-            return 1;
-        }
-
-        std::cout << "Ceres solution found!\n";
-        pathAngles = planner.getPathAngles();
-
-        // Calculate path length in configuration space strictly for logging
-        for (std::size_t i = 1; i < pathAngles.size(); ++i)
-        {
-            double d1 = pathAngles[i].first - pathAngles[i-1].first;
-            double d2 = pathAngles[i].second - pathAngles[i-1].second;
-            pathLength += std::sqrt(d1 * d1 + d2 * d2);
-        }
+        std::cout << "Configuring Ceres Straight-Line Task Space Planner...\n";
+        planner = std::make_shared<CeresPlanner>(robot, checker, cfg.pathInterpolationPoints);
     }
     else
     {
-        std::cout << "Using OMPL RRT* Planner...\n";
-        OMPLPlanner planner(planar_arm->getStateSpace());
+        std::cout << "Configuring OMPL RRT* C-Space Planner...\n";
+        auto ompl = std::make_shared<OMPLPlanner>(robot->getStateSpace());
+        ompl->setStateValidityChecker([&](const ob::State* s) { return checker->isStateValid(s); });
         
-        planner.setStateValidityChecker([&checker](const ob::State *state) {
-            return checker->isStateValid(state);
-        });
-        
-        planner.setStartGoal(cfg.startTheta1, cfg.startTheta2, cfg.goalTheta1, cfg.goalTheta2);
-
         RRTStarSettings settings;
         settings.range = cfg.range;
         settings.goalBias = cfg.goalBias;
         settings.rewireFactor = cfg.rewireFactor;
         settings.pathInterpolationPoints = cfg.pathInterpolationPoints;
-        planner.configureRRTStar(settings);
-
-        if (!planner.solve(cfg.solveTime))
-        {
-            std::cout << "No OMPL solution found.\n";
-            return 1;
-        }
-
-        std::cout << "OMPL solution found! Smoothing path...\n";
-        planner.simplifyPath(1.5);
-        pathAngles = planner.getInterpolatedPath(cfg.pathInterpolationPoints);
-        pathLength = planner.getPathLength();
+        ompl->configureRRTStar(settings);
+        planner = ompl;
     }
 
+    // 3. Execution Pipeline
+    planner->setStartGoal(cfg.startTheta1, cfg.startTheta2, cfg.goalTheta1, cfg.goalTheta2);
+
+    if (!planner->solve(cfg.solveTime))
+    {
+        std::cout << "No solution found.\n";
+        return 1;
+    }
+
+    std::cout << "Solution found! Extracting path...\n";
+    planner->simplifyPath(1.5);
+    
+    auto pathAngles = planner->getPathAngles();
+    double pathLength = planner->getPathLength();
+
+    // 4. Data Export
     const fs::path pathCsv = "path_angles.csv";
     const fs::path collisionCsv = "collision_map.csv";
     const fs::path obstaclesCsv = "obstacles.csv";
 
     writePathCsv(pathCsv, pathAngles);
-    writeCollisionMapCsv(collisionCsv, planar_arm->getStateSpace(), *checker, cfg.collisionGridResolution);
+    writeCollisionMapCsv(collisionCsv, robot->getStateSpace(), *checker, cfg.collisionGridResolution);
     writeObstacleCsv(obstaclesCsv, obstacles);
 
     std::cout << "Found solution with " << pathAngles.size() << " states.\n";

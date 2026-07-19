@@ -5,7 +5,7 @@
 
 #include <fcl/fcl.h>
 #include <ompl/base/State.h>
-#include "two_dof_planar_arm.hpp"
+#include "robot_mechanism.hpp"
 
 namespace motion_planning_examples
 {
@@ -20,7 +20,7 @@ struct SquareObstacle
 class FCLCollisionChecker
 {
 public:
-    FCLCollisionChecker(std::shared_ptr<TwoDOFPlanarArm> arm,
+    FCLCollisionChecker(std::shared_ptr<RobotMechanism> arm,
                         double objectHeight,
                         const std::vector<SquareObstacle>& obstacles);
 
@@ -29,7 +29,7 @@ public:
 private:
     static bool inCollision(const fcl::CollisionObjectd& a, const fcl::CollisionObjectd& b);
 
-    std::shared_ptr<TwoDOFPlanarArm> arm_;
+    std::shared_ptr<RobotMechanism> arm_;
     std::vector<fcl::CollisionObjectd> obstacleObjects_; 
 };
 

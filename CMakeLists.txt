@@ -22,8 +22,8 @@ add_executable(
     src/main.cpp
     src/two_dof_planar_arm.cpp
     src/ompl_planner.cpp
-    src/fcl_collision_checker.cpp
     src/ceres_planner.cpp
+    src/fcl_collision_checker.cpp
 )
 
 # Enable strict compiler warnings

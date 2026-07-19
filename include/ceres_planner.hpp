@@ -1,46 +1,35 @@
 #pragma once
 
+#include "planner.hpp"
+#include "robot_mechanism.hpp"
+#include "fcl_collision_checker.hpp"
+
 #include <cstddef>
 #include <memory>
-#include <utility>
 #include <vector>
-
-#include "two_dof_planar_arm.hpp"
-#include "fcl_collision_checker.hpp"
 
 namespace motion_planning_examples
 {
 
-class CeresPlanner
+class CeresPlanner : public Planner
 {
 public:
-    CeresPlanner(std::shared_ptr<TwoDOFPlanarArm> arm, 
+    CeresPlanner(std::shared_ptr<RobotMechanism> arm, 
                  std::shared_ptr<FCLCollisionChecker> checker,
-                 double link1Length, 
-                 double link2Length, 
                  int numWaypoints = 100);
 
-    // Formulate start and goal purely in Cartesian Workspace
-    // We pass elbowUp to select the correct IK branch that matches our configuration
-    void setStartGoalWorkspace(double startX, double startY, double goalX, double goalY, bool elbowUp);
+    // Ceres internally converts C-Space goals to Workspace tracking lines
+    void setStartGoal(double startTheta1, double startTheta2, double goalTheta1, double goalTheta2) override;
 
-    // Runs the trajectory optimization and strictly checks the result for collisions
-    bool solve();
+    bool solve(double solveTimeSeconds) override;
 
-    // Returns the C-Space path for execution and visualization
-    std::vector<std::pair<double, double>> getPathAngles() const;
+    [[nodiscard]] std::vector<std::pair<double, double>> getPathAngles() const override;
+    [[nodiscard]] double getPathLength() const override;
 
 private:
-    // Trigonometry-free SO(2) algebraic IK to seed the initial guess
-    bool computeAlgebraicIK(double px, double py, bool elbow_up,
-                            double& v1x, double& v1y, 
-                            double& v2x, double& v2y) const;
-
-    std::shared_ptr<TwoDOFPlanarArm> arm_;
+    std::shared_ptr<RobotMechanism> arm_;
     std::shared_ptr<FCLCollisionChecker> checker_;
     
-    double l1_;
-    double l2_;
     int numWaypoints_;
 
     double startX_{0.0};
@@ -49,7 +38,6 @@ private:
     double goalY_{0.0};
     bool elbowUp_{true};
 
-    // Continuous block of variables for Ceres where each is a 2D vector [x, y] on S^1
     std::vector<double> v1Path_;
     std::vector<double> v2Path_;
 };

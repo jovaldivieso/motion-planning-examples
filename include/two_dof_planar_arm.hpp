@@ -1,28 +1,30 @@
 #pragma once
 
-#include <memory>
-#include <fcl/fcl.h>
-#include <ompl/base/StateSpace.h>
+#include "robot_mechanism.hpp"
 
 namespace motion_planning_examples
 {
 
-class TwoDOFPlanarArm
+class TwoDOFPlanarArm : public RobotMechanism
 {
 public:
     TwoDOFPlanarArm(double link1Length, double link2Length, double linkThickness, double objectHeight);
 
-    // Returns the SO(2) x SO(2) compound state space defining this arm
-    [[nodiscard]] std::shared_ptr<ompl::base::StateSpace> getStateSpace() const;
+    [[nodiscard]] std::shared_ptr<ompl::base::StateSpace> getStateSpace() const override;
 
-    // Forward Kinematics: Computes the 3D transforms for both links given a state
     void computeForwardKinematics(const ompl::base::State* state, 
-                                  fcl::Transform3d& tf1, 
-                                  fcl::Transform3d& tf2) const;
+                                  std::vector<fcl::Transform3d>& transforms) const override;
 
-    // Geometries required by the collision checker
-    [[nodiscard]] std::shared_ptr<fcl::CollisionGeometryd> getLink1Geometry() const { return link1Geometry_; }
-    [[nodiscard]] std::shared_ptr<fcl::CollisionGeometryd> getLink2Geometry() const { return link2Geometry_; }
+    void computeEndEffectorTransform(const ompl::base::State* state, 
+                                     fcl::Transform3d& transform) const override;
+
+    [[nodiscard]] std::vector<std::shared_ptr<fcl::CollisionGeometryd>> getCollisionGeometries() const override;
+
+    [[nodiscard]] bool computeInverseKinematics(const std::vector<double>& targetWorkspace, 
+                                                bool hint, 
+                                                std::vector<double>& seedState) const override;
+
+    [[nodiscard]] std::vector<double> getKinematicParameters() const override;
 
 private:
     double l1_;

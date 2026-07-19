@@ -11,7 +11,6 @@ namespace ob = ompl::base;
 namespace motion_planning_examples
 {
 
-// Functor to enforce orthogonal projection straight line constraint
 struct StraightLineCost
 {
     StraightLineCost(double l1, double l2, double sx, double sy, double p00, double p01, double p11, double weight)
@@ -20,8 +19,6 @@ struct StraightLineCost
     template <typename T>
     bool operator()(const T* const v1, const T* const v2, T* residual) const
     {
-        // Compute forward kinematics completely algebraicaly: L1*v1 + L2*v12
-        // where local v2 is projected to global v12 via the R1 rotation matrix
         T v12_x = v1[0] * v2[0] - v1[1] * v2[1];
         T v12_y = v1[1] * v2[0] + v1[0] * v2[1];
         
@@ -31,7 +28,6 @@ struct StraightLineCost
         T dx = ee_x - T(sx_);
         T dy = ee_y - T(sy_);
 
-        // Apply Orthogonal Projection Matrix P_perp * delta_x
         residual[0] = T(w_) * (T(p00_) * dx + T(p01_) * dy);
         residual[1] = T(w_) * (T(p01_) * dx + T(p11_) * dy);
         return true;
@@ -41,7 +37,6 @@ private:
     double l1_, l2_, sx_, sy_, p00_, p01_, p11_, w_;
 };
 
-// Functor to pull points evenly like an elastic band
 struct SmoothnessCost
 {
     explicit SmoothnessCost(double weight) : w_(weight) {}
@@ -57,56 +52,50 @@ private:
     double w_;
 };
 
-CeresPlanner::CeresPlanner(std::shared_ptr<TwoDOFPlanarArm> arm, 
+CeresPlanner::CeresPlanner(std::shared_ptr<RobotMechanism> arm, 
                            std::shared_ptr<FCLCollisionChecker> checker,
-                           double link1Length, double link2Length, int numWaypoints)
+                           int numWaypoints)
     : arm_(std::move(arm)), checker_(std::move(checker)), 
-      l1_(link1Length), l2_(link2Length), numWaypoints_(numWaypoints)
+      numWaypoints_(numWaypoints)
 {
     if (numWaypoints_ < 2) throw std::invalid_argument("At least 2 waypoints required.");
     v1Path_.resize(2 * numWaypoints_, 0.0);
     v2Path_.resize(2 * numWaypoints_, 0.0);
 }
 
-void CeresPlanner::setStartGoalWorkspace(double startX, double startY, double goalX, double goalY, bool elbowUp)
+void CeresPlanner::setStartGoal(double startTheta1, double startTheta2, double goalTheta1, double goalTheta2)
 {
-    startX_ = startX;
-    startY_ = startY;
-    goalX_ = goalX;
-    goalY_ = goalY;
-    elbowUp_ = elbowUp;
+    auto space = arm_->getStateSpace();
+    
+    // Evaluate Start Task Space via generic EE FK
+    ob::State* sState = space->allocState();
+    auto* sComp = sState->as<ob::CompoundStateSpace::StateType>();
+    sComp->as<ob::SO2StateSpace::StateType>(0)->value = startTheta1;
+    sComp->as<ob::SO2StateSpace::StateType>(1)->value = startTheta2;
+    
+    fcl::Transform3d ee_tf;
+    arm_->computeEndEffectorTransform(sState, ee_tf);
+    startX_ = ee_tf.translation().x();
+    startY_ = ee_tf.translation().y();
+    
+    // Evaluate Goal Task Space
+    ob::State* gState = space->allocState();
+    auto* gComp = gState->as<ob::CompoundStateSpace::StateType>();
+    gComp->as<ob::SO2StateSpace::StateType>(0)->value = goalTheta1;
+    gComp->as<ob::SO2StateSpace::StateType>(1)->value = goalTheta2;
+    
+    arm_->computeEndEffectorTransform(gState, ee_tf);
+    goalX_ = ee_tf.translation().x();
+    goalY_ = ee_tf.translation().y();
+
+    space->freeState(sState);
+    space->freeState(gState);
+
+    elbowUp_ = (startTheta2 >= 0.0);
 }
 
-bool CeresPlanner::computeAlgebraicIK(double px, double py, bool elbow_up, double& v1x, double& v1y, double& v2x, double& v2y) const
+bool CeresPlanner::solve(double /*solveTimeSeconds*/)
 {
-    double p_sq = px * px + py * py;
-    double k = (p_sq + l1_ * l1_ - l2_ * l2_) / (2.0 * l1_);
-    double discriminant = p_sq - k * k;
-
-    if (discriminant < 0.0) return false; // Geometrically unreachable
-
-    // By selecting the sign of the orthogonal tangent projection, we naturally 
-    // select the elbow-up (+1.0) or elbow-down (-1.0) configuration branch natively on S1
-    double sign = elbow_up ? 1.0 : -1.0;
-
-    // 1. Intersect line and circle for link 1 
-    v1x = (k * px + sign * std::sqrt(discriminant) * py) / p_sq;
-    v1y = (k * py - sign * std::sqrt(discriminant) * px) / p_sq;
-
-    // 2. Global link 2 vector
-    double v12x = (px - l1_ * v1x) / l2_;
-    double v12y = (py - l1_ * v1y) / l2_;
-
-    // 3. Project to local joint space using R1^T
-    v2x =  v1x * v12x + v1y * v12y;
-    v2y = -v1y * v12x + v1x * v12y;
-
-    return true;
-}
-
-bool CeresPlanner::solve()
-{
-    // 1. Build the math trick geometry
     double dirX = goalX_ - startX_;
     double dirY = goalY_ - startY_;
     double len = std::sqrt(dirX * dirX + dirY * dirY);
@@ -115,30 +104,35 @@ bool CeresPlanner::solve()
     dirX /= len;
     dirY /= len;
 
-    // Projection matrix P_perp = I - v*v^T
     double p00 = 1.0 - dirX * dirX;
     double p01 = -dirX * dirY;
     double p11 = 1.0 - dirY * dirY;
 
-    // 2. Initial Seed Generation using pure algebraic IK mapping directly to S1
+    // Delegate Seed IK directly to the specific mechanism implementation
     for (int i = 0; i < numWaypoints_; ++i)
     {
         double t = static_cast<double>(i) / (numWaypoints_ - 1);
         double px = startX_ + t * (goalX_ - startX_);
         double py = startY_ + t * (goalY_ - startY_);
 
-        if (!computeAlgebraicIK(px, py, elbowUp_,
-                                v1Path_[2*i], v1Path_[2*i + 1], 
-                                v2Path_[2*i], v2Path_[2*i + 1]))
+        std::vector<double> seed;
+        if (!arm_->computeInverseKinematics({px, py}, elbowUp_, seed))
         {
             std::cerr << "Straight line passes through unreachable workspace!" << std::endl;
             return false;
         }
+        v1Path_[2*i] = seed[0];
+        v1Path_[2*i + 1] = seed[1];
+        v2Path_[2*i] = seed[2];
+        v2Path_[2*i + 1] = seed[3];
     }
 
-    // 3. Configure NLP directly on the Torus Manifold
     ceres::Problem problem;
     ceres::Manifold* sphereManifold = new ceres::SphereManifold<2>;
+
+    std::vector<double> kinParams = arm_->getKinematicParameters();
+    double l1 = kinParams[0];
+    double l2 = kinParams[1];
 
     for (int i = 0; i < numWaypoints_; ++i)
     {
@@ -146,7 +140,7 @@ bool CeresPlanner::solve()
         problem.AddParameterBlock(&v2Path_[2*i], 2, sphereManifold);
 
         auto* lineCost = new ceres::AutoDiffCostFunction<StraightLineCost, 2, 2, 2>(
-            new StraightLineCost(l1_, l2_, startX_, startY_, p00, p01, p11, 20.0));
+            new StraightLineCost(l1, l2, startX_, startY_, p00, p01, p11, 20.0));
         problem.AddResidualBlock(lineCost, nullptr, &v1Path_[2*i], &v2Path_[2*i]);
     }
 
@@ -159,13 +153,11 @@ bool CeresPlanner::solve()
         problem.AddResidualBlock(smoothCost2, nullptr, &v2Path_[2*i], &v2Path_[2*i + 2]);
     }
 
-    // Pin the start and goal strictly to their IK solutions
     problem.SetParameterBlockConstant(&v1Path_[0]);
     problem.SetParameterBlockConstant(&v2Path_[0]);
     problem.SetParameterBlockConstant(&v1Path_[2*(numWaypoints_-1)]);
     problem.SetParameterBlockConstant(&v2Path_[2*(numWaypoints_-1)]);
 
-    // 4. Solve 
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_QR;
     options.minimizer_progress_to_stdout = false;
@@ -176,7 +168,6 @@ bool CeresPlanner::solve()
     
     if (!summary.IsSolutionUsable()) return false;
 
-    // 5. Collision Avoidance Sweep along the computed line
     ob::State* state = arm_->getStateSpace()->allocState();
     auto* compound = state->as<ob::CompoundStateSpace::StateType>();
 
@@ -204,12 +195,24 @@ std::vector<std::pair<double, double>> CeresPlanner::getPathAngles() const
     path.reserve(numWaypoints_);
     for (int i = 0; i < numWaypoints_; ++i)
     {
-        // Extract the explicit SO(2) manifold vectors back to angles purely for execution
         double t1 = std::atan2(v1Path_[2*i + 1], v1Path_[2*i]);
         double t2 = std::atan2(v2Path_[2*i + 1], v2Path_[2*i]);
         path.emplace_back(t1, t2);
     }
     return path;
+}
+
+double CeresPlanner::getPathLength() const
+{
+    double len = 0.0;
+    auto path = getPathAngles();
+    for (std::size_t i = 1; i < path.size(); ++i)
+    {
+        double d1 = path[i].first - path[i-1].first;
+        double d2 = path[i].second - path[i-1].second;
+        len += std::sqrt(d1 * d1 + d2 * d2);
+    }
+    return len;
 }
 
 }  // namespace motion_planning_examples
