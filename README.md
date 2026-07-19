@@ -99,11 +99,11 @@ $$
 $$
 
 $$
-θ_1^{(\pm)} = \atan(p_y,p_x) -
-\atan\bigl(l_2\sin\theta_2^{(\pm)},\ l_1 + l_2\cos\theta_2^{(\pm)}\bigr).
+θ_1^{(\pm)} = \mathrm{atan2}(p_y,p_x) -
+\mathrm{atan2}\bigl(l_2\sin\theta_2^{(\pm)},\ l_1 + l_2\cos\theta_2^{(\pm)}\bigr).
 $$
 
-The branch is chosen by manifold proximity to a manifold seed state (used to keep branch continuity along the waypoint sequence). Note the $\atan$ function here takes two arguments.
+The branch is chosen by manifold proximity to a manifold seed state (used to keep branch continuity along the waypoint sequence). Here $\mathrm{atan2}(y,x)$ is the two-argument arctangent.
 
 Important implementation detail:
 
