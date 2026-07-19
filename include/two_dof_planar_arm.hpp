@@ -15,7 +15,7 @@ public:
     void computeForwardKinematics(const JointManifoldState &state,
                                   std::vector<fcl::Transform3d> &transforms) const override;
 
-    void computeEndEffector(const JointManifoldState &state, fcl::Transform3d &transform) const override;
+    void computeEndEffectorPose(const JointManifoldState &state, fcl::Transform3d &transform) const override;
 
     [[nodiscard]] std::vector<std::shared_ptr<fcl::CollisionGeometryd>> getCollisionGeometries() const override;
 

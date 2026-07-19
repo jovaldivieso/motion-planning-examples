@@ -46,7 +46,7 @@ void TwoDOFPlanarArm::computeForwardKinematics(const JointManifoldState &state,
     transforms.push_back(tf2);
 }
 
-void TwoDOFPlanarArm::computeEndEffector(const JointManifoldState &state,
+void TwoDOFPlanarArm::computeEndEffectorPose(const JointManifoldState &state,
                                          fcl::Transform3d &transform) const
 {
     if (state.size() < 4) { transform = fcl::Transform3d::Identity(); return; }

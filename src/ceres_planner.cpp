@@ -66,11 +66,11 @@ void CeresPlanner::setStartGoal(const JointManifoldState &start, const JointMani
     goalState_ = goal;
 
     fcl::Transform3d ee_tf;
-    arm_->computeEndEffector(startState_, ee_tf);
+    arm_->computeEndEffectorPose(startState_, ee_tf);
     startX_ = ee_tf.translation().x();
     startY_ = ee_tf.translation().y();
 
-    arm_->computeEndEffector(goalState_, ee_tf);
+    arm_->computeEndEffectorPose(goalState_, ee_tf);
     goalX_ = ee_tf.translation().x();
     goalY_ = ee_tf.translation().y();
 }
