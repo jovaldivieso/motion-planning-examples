@@ -1,4 +1,4 @@
-# motion_planning_examples
+# C++ Motion Planning Examples
 
 cmake -S . -B build
 
