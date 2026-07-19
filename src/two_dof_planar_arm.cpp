@@ -16,8 +16,8 @@ TwoDOFPlanarArm::TwoDOFPlanarArm(double link1Length, double link2Length, double 
 
 std::size_t TwoDOFPlanarArm::getJointCount() const { return 2; }
 
-void TwoDOFPlanarArm::computeForwardKinematicsFromManifoldState(const JointManifoldState &state,
-                                                                std::vector<fcl::Transform3d> &transforms) const
+void TwoDOFPlanarArm::computeForwardKinematics(const JointManifoldState &state,
+                                               std::vector<fcl::Transform3d> &transforms) const
 {
     if (state.size() < 4) { transforms.clear(); return; }
 
@@ -46,8 +46,8 @@ void TwoDOFPlanarArm::computeForwardKinematicsFromManifoldState(const JointManif
     transforms.push_back(tf2);
 }
 
-void TwoDOFPlanarArm::computeEndEffectorFromManifoldState(const JointManifoldState &state,
-                                                           fcl::Transform3d &transform) const
+void TwoDOFPlanarArm::computeEndEffector(const JointManifoldState &state,
+                                         fcl::Transform3d &transform) const
 {
     if (state.size() < 4) { transform = fcl::Transform3d::Identity(); return; }
 

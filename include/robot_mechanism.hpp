@@ -17,9 +17,10 @@ public:
 
     [[nodiscard]] virtual std::size_t getJointCount() const = 0;
 
-    virtual void computeForwardKinematicsFromManifoldState(const JointManifoldState &state, std::vector<fcl::Transform3d> &transforms) const = 0;
+    virtual void computeForwardKinematics(const JointManifoldState &state,
+                                          std::vector<fcl::Transform3d> &transforms) const = 0;
 
-    virtual void computeEndEffectorFromManifoldState(const JointManifoldState &state, fcl::Transform3d &transform) const = 0;
+    virtual void computeEndEffector(const JointManifoldState &state, fcl::Transform3d &transform) const = 0;
 
     [[nodiscard]] virtual std::vector<std::shared_ptr<fcl::CollisionGeometryd>> getCollisionGeometries() const = 0;
 

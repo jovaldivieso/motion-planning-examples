@@ -23,7 +23,7 @@ FCLCollisionChecker::FCLCollisionChecker(std::shared_ptr<RobotMechanism> arm,
 bool FCLCollisionChecker::isManifoldStateValid(const JointManifoldState &state) const
 {
     fkTransformsCache_.clear();
-    arm_->computeForwardKinematicsFromManifoldState(state, fkTransformsCache_);
+    arm_->computeForwardKinematics(state, fkTransformsCache_);
 
     auto geometries = arm_->getCollisionGeometries();
 

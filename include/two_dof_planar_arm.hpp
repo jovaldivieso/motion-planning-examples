@@ -12,9 +12,10 @@ public:
 
     [[nodiscard]] std::size_t getJointCount() const override;
 
-    void computeForwardKinematicsFromManifoldState(const JointManifoldState &state, std::vector<fcl::Transform3d> &transforms) const override;
+    void computeForwardKinematics(const JointManifoldState &state,
+                                  std::vector<fcl::Transform3d> &transforms) const override;
 
-    void computeEndEffectorFromManifoldState(const JointManifoldState &state, fcl::Transform3d &transform) const override;
+    void computeEndEffector(const JointManifoldState &state, fcl::Transform3d &transform) const override;
 
     [[nodiscard]] std::vector<std::shared_ptr<fcl::CollisionGeometryd>> getCollisionGeometries() const override;
 
