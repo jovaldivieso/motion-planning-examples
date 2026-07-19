@@ -1,0 +1,44 @@
+# RRT* planner settings
+solve_time: 3.0
+range: 0.30
+goal_bias: 0.05
+rewire_factor: 1.10
+
+# Sampling and map export
+path_interpolation_points: 420
+collision_grid_resolution: 220
+random_seed: 7
+
+# Random square obstacles in workspace
+obstacle_count: 2
+obstacle_min_size: 0.12
+obstacle_max_size: 0.22
+workspace_min: -1.6
+workspace_max: 1.6
+
+# 2-link planar arm geometry
+link1_length: 1.0
+link2_length: 0.9
+link_thickness: 0.08
+object_height: 0.20
+
+# Torus embedding used for PDF visualization
+torus_major_radius: 2.0
+torus_minor_radius: 0.7
+
+# Start and goal in joint-space (theta1, theta2)
+start: [1.00, 1.00]
+goal: [2.00, 2.00]
+
+# Output file for the final figure (use .pdf or .png)
+output_pdf: torus_rrtstar.png
+
+# Optional rotating clip. Leave empty to disable.
+# Use .mp4 for ffmpeg export, otherwise .gif via Pillow.
+output_video: torus_rrtstar.mp4
+video_frames: 120
+video_fps: 24
+
+# Camera used for both the static PDF and rotating clip.
+camera_elev: 40.0
+camera_azim: 0.0

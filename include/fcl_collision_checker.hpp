@@ -1,0 +1,36 @@
+#pragma once
+
+#include <memory>
+#include <vector>
+
+#include <fcl/fcl.h>
+#include <ompl/base/State.h>
+#include "two_dof_planar_arm.hpp"
+
+namespace motion_planning_examples
+{
+
+struct SquareObstacle
+{
+    double cx{0.0};
+    double cy{0.0};
+    double size{0.25};
+};
+
+class FCLCollisionChecker
+{
+public:
+    FCLCollisionChecker(std::shared_ptr<TwoDOFPlanarArm> arm,
+                        double objectHeight,
+                        const std::vector<SquareObstacle>& obstacles);
+
+    [[nodiscard]] bool isStateValid(const ompl::base::State* state) const;
+
+private:
+    static bool inCollision(const fcl::CollisionObjectd& a, const fcl::CollisionObjectd& b);
+
+    std::shared_ptr<TwoDOFPlanarArm> arm_;
+    std::vector<fcl::CollisionObjectd> obstacleObjects_; 
+};
+
+}  // namespace motion_planning_examples

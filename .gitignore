@@ -1,0 +1,6 @@
+build/
+venv/
+*.mp4
+*.png
+*.csv
+.DS_Store
