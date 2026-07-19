@@ -18,8 +18,6 @@ Planner selection is in `config.yaml`:
 planner: ompl   # or ceres
 ```
 
-Both plotting scripts now append planner suffixes to outputs, so files end with either `_ompl` or `_ceres` (for both image and video outputs).
-
 ## Robot Mechanisms
 
 The base abstraction is `RobotMechanism`, intended for multiple mechanisms (not only the current 2-link planar arm example).
