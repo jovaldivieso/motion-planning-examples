@@ -22,9 +22,6 @@ planner: ompl   # or ceres
 
 The base abstraction is `RobotMechanism`, intended for multiple mechanisms (not only the current 2-link planar arm example).
 
-It is manifold-only and planner-agnostic: FK/IK, interpolation, distances, and collision geometry are defined only on manifold coordinates.
-Any OMPL `State` handling (including `SO2` scalar assignment/extraction) is isolated inside `OMPLPlanner`.
-
 ### Mechanism Specification
 
 Current implemented mechanism instance is a 2-link planar revolute arm:
@@ -47,7 +44,7 @@ $$
 = (c_1c_2 - s_1s_2,\ s_1c_2 + c_1s_2).
 $$
 
-### Forward Kinematics (FK)
+### Forward Kinematics with Matrix Lie Groups
 
 For end-effector position in the plane:
 
@@ -79,8 +76,6 @@ $$
 
 with end-effector orientation using $(c_{12},s_{12})$.
 
-### FK with Matrix Lie Groups
-
 We can write the planar chain in homogeneous form with $SE(2)$ transforms:
 
 $$
@@ -107,7 +102,7 @@ $$
 
 The implementation uses 3D rigid transforms (`fcl::Transform3d`) with planar motion embedded in $SE(3)$ (z-translation fixed to 0, rotation only around z).
 
-### IK with Matrix Lie Groups
+### Inverse Kinematics with Matrix Lie Groups
 
 Given target point $(p_x,p_y)$, the code solves:
 
@@ -152,21 +147,21 @@ Important implementation details:
 - Backend IK/FK/collision/planners do not apply scalar angle wrapping.
 - Scalar angles are only used at explicit boundaries where external APIs require them (OMPL `SO2` internal state assignment in `OMPLPlanner`, and CSV export for plotting).
 
-### Manifold Representation Policy
+### Robot State Representation
 
 Backend state representation uses manifold coordinates directly:
 
-- Per-joint state: unit vector $v = [\cos\theta,\sin\theta] \in S^1$.
+- Per-joint state: unit vector $v = [\cos\theta,\sin\theta] \in S^1$ for revolut joints.
 - Robot joint configuration: Cartesian product of per-joint manifold factors.
 - Path representation in planners: sequence of manifold states.
 
-No explicit angle wrapping is used in backend trajectory optimization or IK selection.
+No explicit angle wrapping is used in backend trajectory optimization or IK solution selection thanks to this global representation.
 
 ## Global Planners
 
-### OMPL RRT* on the Manifold
+### OMPL RRT*
 
-Global planner uses OMPL RRT* over manifold configuration spaces (for the current mechanism: $T^2 = S^1\times S^1$).
+As a global planner example we use OMPL RRT* over manifold configuration spaces (for the current mechanism: $T^2 = S^1\times S^1$).
 
 - State space: `CompoundStateSpace(SO2, SO2)` for current 2-joint example
 - Sampling: manifold-aware via OMPL's `SO2` spaces
@@ -179,7 +174,7 @@ Path-length objective is OMPL's geometric path length under the underlying state
 
 ### Ceres Straight-Line End-Effector Planner
 
-Local planner enforces a straight line in task space between start and goal end-effector points.
+As a local planner example we use an optimization based motion planner that enforces a straight line in task space between start and goal end-effector points.
 
 #### 1) Line Parameterization in Task Space
 
