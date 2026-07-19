@@ -126,12 +126,10 @@ $$
 
 For each branch, joint 1 is solved by a linear $2\times 2$ system in $(c_1,s_1)$ (no trigonometric inverse or angle wrapping in backend IK):
 
-$$
-\begin{bmatrix} p_x \\ p_y \end{bmatrix}
-=
+$$ \begin{bmatrix} p_x \\ p_y \end{bmatrix} =
 \begin{bmatrix}
 k_1 & -k_2 \\
-k_2 & \phantom{-}k_1
+k_2 & -k_1
 \end{bmatrix}
 \begin{bmatrix} c_1 \\ s_1 \end{bmatrix},
 \qquad
