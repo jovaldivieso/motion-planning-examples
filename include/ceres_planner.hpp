@@ -19,7 +19,6 @@ public:
                  int numWaypoints = 100);
 
     void setStartGoal(const JointManifoldState &start, const JointManifoldState &goal) override;
-
     bool solve(double solveTimeSeconds) override;
 
     [[nodiscard]] ManifoldPath getPathManifoldStates() const override;
@@ -36,7 +35,6 @@ private:
     double goalX_{0.0};
     double goalY_{0.0};
 
-    // Stored as manifold-native seed states.
     JointManifoldState startState_;
     JointManifoldState goalState_;
 

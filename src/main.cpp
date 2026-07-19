@@ -13,6 +13,7 @@
 #include <ompl/base/StateSpace.h>
 #include <ompl/base/spaces/SO2StateSpace.h>
 
+#include "manifold_types.hpp"
 #include "robot_mechanism.hpp"
 #include "two_dof_planar_arm.hpp"
 #include "planner.hpp"
@@ -22,6 +23,7 @@
 
 namespace ob = ompl::base;
 namespace fs = std::filesystem;
+using motion_planning_examples::JointManifoldState;
 using motion_planning_examples::RobotMechanism;
 using motion_planning_examples::TwoDOFPlanarArm;
 using motion_planning_examples::FCLCollisionChecker;
@@ -86,14 +88,6 @@ std::optional<std::pair<double, double>> parseAnglePair(const std::string &value
                               std::stod(trim(s.substr(comma + 1))));
     }
     catch (...) { return std::nullopt; }
-}
-
-motion_planning_examples::JointManifoldState manifoldFromAngles(double theta1, double theta2)
-{
-    return {
-        motion_planning_examples::JointS1{std::cos(theta1), std::sin(theta1)},
-        motion_planning_examples::JointS1{std::cos(theta2), std::sin(theta2)}
-    };
 }
 
 std::unordered_map<std::string, std::string> loadSimpleYaml(const fs::path &path)
@@ -235,16 +229,17 @@ void writeObstacleCsv(const fs::path &path, const std::vector<SquareObstacle> &o
     }
 }
 
-void writePathCsv(const fs::path &path, const motion_planning_examples::ManifoldPath &pathStates)
+// Automatically unpacks the generic manifold vectors back to visualization angles
+void writePathCsv(const fs::path &path, const motion_planning_examples::ManifoldPath &manifoldStates)
 {
     std::ofstream out(path);
     out << "theta1,theta2\n";
-    for (const auto &state : pathStates)
+    for (const auto &state : manifoldStates)
     {
-        if (state.size() < 2) continue;
-        const double theta1 = std::atan2(state[0][1], state[0][0]);
-        const double theta2 = std::atan2(state[1][1], state[1][0]);
-        out << theta1 << ',' << theta2 << '\n';
+        // Knowing it's a 2DOF arm for python visualization, we extract the angles
+        double t1 = std::atan2(state[1], state[0]);
+        double t2 = std::atan2(state[3], state[2]);
+        out << t1 << ',' << t2 << '\n';
     }
 }
 
@@ -305,14 +300,12 @@ int main(int argc, char **argv)
 
     const auto obstacles = generateObstacles(cfg);
 
-    // 1. Core Abstractions Instantiated
     std::shared_ptr<RobotMechanism> robot = std::make_shared<TwoDOFPlanarArm>(
         cfg.link1Length, cfg.link2Length, cfg.linkThickness, cfg.objectHeight);
 
     auto checker = std::make_shared<FCLCollisionChecker>(robot, cfg.objectHeight, obstacles);
     std::shared_ptr<Planner> planner;
 
-    // 2. Polymorphic Architecture routing
     if (cfg.plannerType == "ceres")
     {
         std::cout << "Configuring Ceres Straight-Line Task Space Planner...\n";
@@ -321,7 +314,7 @@ int main(int argc, char **argv)
     else
     {
         std::cout << "Configuring OMPL RRT* C-Space Planner...\n";
-        auto ompl = std::make_shared<OMPLPlanner>(robot->getStateSpace());
+        auto ompl = std::make_shared<OMPLPlanner>(robot); 
         ompl->setStateValidityChecker([&](const ob::State* s) { return checker->isStateValid(s); });
         
         RRTStarSettings settings;
@@ -333,9 +326,12 @@ int main(int argc, char **argv)
         planner = ompl;
     }
 
-    // 3. Execution Pipeline
-    const auto startState = manifoldFromAngles(cfg.startTheta1, cfg.startTheta2);
-    const auto goalState = manifoldFromAngles(cfg.goalTheta1, cfg.goalTheta2);
+    // Convert input config angles dynamically into the generic manifold representation
+    JointManifoldState startState = {std::cos(cfg.startTheta1), std::sin(cfg.startTheta1), 
+                                     std::cos(cfg.startTheta2), std::sin(cfg.startTheta2)};
+    JointManifoldState goalState = {std::cos(cfg.goalTheta1), std::sin(cfg.goalTheta1), 
+                                    std::cos(cfg.goalTheta2), std::sin(cfg.goalTheta2)};
+
     planner->setStartGoal(startState, goalState);
 
     if (!planner->solve(cfg.solveTime))
@@ -345,19 +341,19 @@ int main(int argc, char **argv)
     }
 
     std::cout << "Solution found! Extracting path...\n";
-    auto pathStates = planner->getPathManifoldStates();
+    
+    auto pathManifoldStates = planner->getPathManifoldStates();
     double pathLength = planner->getPathLength();
 
-    // 4. Data Export
     const fs::path pathCsv = "path_angles.csv";
     const fs::path collisionCsv = "collision_map.csv";
     const fs::path obstaclesCsv = "obstacles.csv";
 
-    writePathCsv(pathCsv, pathStates);
+    writePathCsv(pathCsv, pathManifoldStates);
     writeCollisionMapCsv(collisionCsv, robot->getStateSpace(), *checker, cfg.collisionGridResolution);
     writeObstacleCsv(obstaclesCsv, obstacles);
 
-    std::cout << "Found solution with " << pathStates.size() << " states.\n";
+    std::cout << "Found solution with " << pathManifoldStates.size() << " states.\n";
     std::cout << "Path length in configuration space: " << pathLength << "\n";
     std::cout << "Successfully generated: " << pathCsv << ", " << collisionCsv << ", and " << obstaclesCsv << '\n';
     

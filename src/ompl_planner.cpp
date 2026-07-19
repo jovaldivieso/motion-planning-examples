@@ -1,8 +1,6 @@
 #include "ompl_planner.hpp"
 
-#include <cmath>
 #include <stdexcept>
-#include <ompl/base/spaces/SO2StateSpace.h>
 #include <ompl/geometric/SimpleSetup.h>
 #include <ompl/geometric/planners/rrt/RRTstar.h>
 
@@ -12,10 +10,10 @@ namespace og = ompl::geometric;
 namespace motion_planning_examples
 {
 
-OMPLPlanner::OMPLPlanner(std::shared_ptr<ob::StateSpace> space)
-    : space_(std::move(space))
+OMPLPlanner::OMPLPlanner(std::shared_ptr<RobotMechanism> arm)
+    : arm_(std::move(arm))
 {
-    simpleSetup_ = std::make_shared<og::SimpleSetup>(space_);
+    simpleSetup_ = std::make_shared<og::SimpleSetup>(arm_->getStateSpace());
 }
 
 void OMPLPlanner::setStateValidityChecker(const std::function<bool(const ob::State *)> &checker)
@@ -35,23 +33,11 @@ void OMPLPlanner::configureRRTStar(const RRTStarSettings &settings)
 
 void OMPLPlanner::setStartGoal(const JointManifoldState &start, const JointManifoldState &goal)
 {
-    if (start.size() < 2 || goal.size() < 2)
-    {
-        throw std::invalid_argument("OMPLPlanner expects at least 2 manifold joints for start and goal");
-    }
+    ob::ScopedState<> startState(arm_->getStateSpace());
+    arm_->setOMPLState(start, startState.get());
 
-    const double startTheta1 = std::atan2(start[0][1], start[0][0]);
-    const double startTheta2 = std::atan2(start[1][1], start[1][0]);
-    const double goalTheta1 = std::atan2(goal[0][1], goal[0][0]);
-    const double goalTheta2 = std::atan2(goal[1][1], goal[1][0]);
-
-    ob::ScopedState<> startState(space_);
-    startState[0] = startTheta1;
-    startState[1] = startTheta2;
-
-    ob::ScopedState<> goalState(space_);
-    goalState[0] = goalTheta1;
-    goalState[1] = goalTheta2;
+    ob::ScopedState<> goalState(arm_->getStateSpace());
+    arm_->setOMPLState(goal, goalState.get());
 
     simpleSetup_->setStartAndGoalStates(startState, goalState);
 }
@@ -79,13 +65,7 @@ ManifoldPath OMPLPlanner::getPathManifoldStates() const
 
     for (std::size_t i = 0; i < path.getStateCount(); ++i)
     {
-        const auto *state = path.getState(i)->as<ob::CompoundStateSpace::StateType>();
-        const double theta1 = state->as<ob::SO2StateSpace::StateType>(0)->value;
-        const double theta2 = state->as<ob::SO2StateSpace::StateType>(1)->value;
-        waypoints.push_back({
-            JointS1{std::cos(theta1), std::sin(theta1)},
-            JointS1{std::cos(theta2), std::sin(theta2)}
-        });
+        waypoints.push_back(arm_->getManifoldState(path.getState(i)));
     }
 
     return waypoints;

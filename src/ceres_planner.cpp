@@ -1,42 +1,14 @@
 #include "ceres_planner.hpp"
 
-#include <algorithm>
 #include <cmath>
 #include <iostream>
 #include <stdexcept>
 #include <ceres/ceres.h>
 
+namespace ob = ompl::base;
+
 namespace motion_planning_examples
 {
-
-namespace
-{
-JointS1 slerpS1(const JointS1 &a, const JointS1 &b, double t)
-{
-    const double dot = std::clamp(a[0] * b[0] + a[1] * b[1], -1.0, 1.0);
-    const double omega = std::acos(dot);
-
-    if (omega < 1e-10)
-    {
-        return a;
-    }
-
-    const double sinOmega = std::sin(omega);
-    const double wa = std::sin((1.0 - t) * omega) / sinOmega;
-    const double wb = std::sin(t * omega) / sinOmega;
-
-    JointS1 out{wa * a[0] + wb * b[0], wa * a[1] + wb * b[1]};
-    const double n = std::sqrt(out[0] * out[0] + out[1] * out[1]);
-    if (n < 1e-12)
-    {
-        return a;
-    }
-    out[0] /= n;
-    out[1] /= n;
-    return out;
-}
-
-}  // namespace
 
 struct StraightLineCost
 {
@@ -92,15 +64,9 @@ CeresPlanner::CeresPlanner(std::shared_ptr<RobotMechanism> arm,
 
 void CeresPlanner::setStartGoal(const JointManifoldState &start, const JointManifoldState &goal)
 {
-    if (start.size() < 2 || goal.size() < 2)
-    {
-        throw std::invalid_argument("CeresPlanner expects at least 2 manifold joints for start and goal");
-    }
-
     startState_ = start;
     goalState_ = goal;
 
-    // Evaluate start/goal task-space via manifold-native FK.
     fcl::Transform3d ee_tf;
     arm_->computeEndEffectorFromManifoldState(startState_, ee_tf);
     startX_ = ee_tf.translation().x();
@@ -125,17 +91,13 @@ bool CeresPlanner::solve(double /*solveTimeSeconds*/)
     double p01 = -dirX * dirY;
     double p11 = 1.0 - dirY * dirY;
 
-    // Use manifold interpolation to guide IK branch continuity.
     for (int i = 0; i < numWaypoints_; ++i)
     {
         double t = static_cast<double>(i) / (numWaypoints_ - 1);
         double px = startX_ + t * (goalX_ - startX_);
         double py = startY_ + t * (goalY_ - startY_);
 
-        JointManifoldState seedState = {
-            slerpS1(startState_[0], goalState_[0], t),
-            slerpS1(startState_[1], goalState_[1], t)
-        };
+        JointManifoldState seedState = arm_->interpolateManifoldState(startState_, goalState_, t);
 
         JointManifoldState ikSolution;
         if (!arm_->computeInverseKinematics({px, py}, seedState, ikSolution))
@@ -144,11 +106,10 @@ bool CeresPlanner::solve(double /*solveTimeSeconds*/)
             return false;
         }
 
-        // Ceres optimization acts directly on manifold unit vectors.
-        v1Path_[2 * i] = ikSolution[0][0];
-        v1Path_[2 * i + 1] = ikSolution[0][1];
-        v2Path_[2 * i] = ikSolution[1][0];
-        v2Path_[2 * i + 1] = ikSolution[1][1];
+        v1Path_[2 * i] = ikSolution[0];
+        v1Path_[2 * i + 1] = ikSolution[1];
+        v2Path_[2 * i] = ikSolution[2];
+        v2Path_[2 * i + 1] = ikSolution[3];
     }
 
     ceres::Problem problem;
@@ -192,22 +153,22 @@ bool CeresPlanner::solve(double /*solveTimeSeconds*/)
     
     if (!summary.IsSolutionUsable()) return false;
 
+    // Delegate collision check back to OMPL via generic states
+    ob::State* state = arm_->getStateSpace()->allocState();
     bool valid = true;
     for (int i = 0; i < numWaypoints_; ++i)
     {
-        JointManifoldState state = {
-            JointS1{v1Path_[2 * i], v1Path_[2 * i + 1]},
-            JointS1{v2Path_[2 * i], v2Path_[2 * i + 1]}
-        };
+        JointManifoldState flatState = {v1Path_[2*i], v1Path_[2*i+1], v2Path_[2*i], v2Path_[2*i+1]};
+        arm_->setOMPLState(flatState, state);
 
-        if (!checker_->isManifoldStateValid(state))
+        if (!checker_->isStateValid(state))
         {
             std::cerr << "Collision detected on straight line at step " << i << std::endl;
             valid = false;
             break;
         }
     }
-
+    arm_->getStateSpace()->freeState(state);
     return valid;
 }
 
@@ -217,10 +178,7 @@ ManifoldPath CeresPlanner::getPathManifoldStates() const
     path.reserve(numWaypoints_);
     for (int i = 0; i < numWaypoints_; ++i)
     {
-        path.push_back({
-            JointS1{v1Path_[2 * i], v1Path_[2 * i + 1]},
-            JointS1{v2Path_[2 * i], v2Path_[2 * i + 1]}
-        });
+        path.push_back({v1Path_[2*i], v1Path_[2*i+1], v2Path_[2*i], v2Path_[2*i+1]});
     }
     return path;
 }
@@ -231,11 +189,7 @@ double CeresPlanner::getPathLength() const
     auto path = getPathManifoldStates();
     for (std::size_t i = 1; i < path.size(); ++i)
     {
-        const double dot1 = std::clamp(path[i][0][0] * path[i - 1][0][0] + path[i][0][1] * path[i - 1][0][1], -1.0, 1.0);
-        const double dot2 = std::clamp(path[i][1][0] * path[i - 1][1][0] + path[i][1][1] * path[i - 1][1][1], -1.0, 1.0);
-        const double d1 = std::acos(dot1);
-        const double d2 = std::acos(dot2);
-        len += std::sqrt(d1 * d1 + d2 * d2);
+        len += arm_->computeManifoldDistance(path[i], path[i-1]);
     }
     return len;
 }
