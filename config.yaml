@@ -1,3 +1,6 @@
+# Select planner: 'ceres' for straight-line task space, 'ompl' for RRT* C-Space
+planner: ceres
+
 # RRT* planner settings
 solve_time: 3.0
 range: 0.30
@@ -5,7 +8,7 @@ goal_bias: 0.05
 rewire_factor: 1.10
 
 # Sampling and map export
-path_interpolation_points: 420
+path_interpolation_points: 220
 collision_grid_resolution: 220
 random_seed: 7
 
@@ -31,11 +34,11 @@ start: [1.00, 1.00]
 goal: [2.00, 2.00]
 
 # Output file for the final figure (use .pdf or .png)
-output_pdf: torus_rrtstar.png
+output_pdf: torus_path.png
 
 # Optional rotating clip. Leave empty to disable.
 # Use .mp4 for ffmpeg export, otherwise .gif via Pillow.
-output_video: torus_rrtstar.mp4
+output_video: torus_path.mp4
 video_frames: 120
 video_fps: 24
 

@@ -15,6 +15,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 find_package(ompl REQUIRED)
 find_package(fcl REQUIRED)
 find_package(Eigen3 REQUIRED)
+find_package(Ceres REQUIRED)
 
 add_executable(
     plan
@@ -22,6 +23,7 @@ add_executable(
     src/two_dof_planar_arm.cpp
     src/ompl_planner.cpp
     src/fcl_collision_checker.cpp
+    src/ceres_planner.cpp
 )
 
 # Enable strict compiler warnings
@@ -31,12 +33,12 @@ endif()
 
 target_include_directories(plan PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 
-# Consolidate linked libraries and include Eigen3 explicitly
 target_link_libraries(plan PRIVATE 
-    ompl::ompl 
+    ompl::ompl
+    Ceres::ceres
     fcl
     Eigen3::Eigen
 )
 
 # Copy runtime assets to the build directory
-configure_file(rrtstar_config.yaml ${CMAKE_CURRENT_BINARY_DIR}/rrtstar_config.yaml COPYONLY)
+configure_file(config.yaml ${CMAKE_CURRENT_BINARY_DIR}/config.yaml COPYONLY)

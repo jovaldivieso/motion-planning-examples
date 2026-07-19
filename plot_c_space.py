@@ -12,9 +12,7 @@ import numpy as np
 
 
 def read_collision_map(path):
-    t1 = []
-    t2 = []
-    valid = []
+    t1, t2, valid = [], [], []
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -25,8 +23,7 @@ def read_collision_map(path):
 
 
 def read_path(path):
-    t1 = []
-    t2 = []
+    t1, t2 = [], []
     with open(path, newline="", encoding="utf-8") as f:
         reader = csv.DictReader(f)
         for row in reader:
@@ -55,6 +52,15 @@ def main():
     with open(args.config, 'r', encoding='utf-8') as f:
         cfg = yaml.safe_load(f) or {}
     
+    # Read planner for dynamic legends and titles
+    planner_type = str(cfg.get("planner", "ompl")).lower()
+    if planner_type == "ceres":
+        path_label = "Ceres Straight-Line path"
+        title_text = "2-Link Planar Arm on T^2 with Ceres Straight-Line and FCL"
+    else:
+        path_label = "RRT* path"
+        title_text = "2-Link Planar Arm on T^2 with RRT* and FCL"
+
     major = float(cfg.get("torus_major_radius", 2.0))
     minor = float(cfg.get("torus_minor_radius", 0.7))
     start_angles = cfg.get("start", [0.0, 0.0])
@@ -95,12 +101,11 @@ def main():
 
     facecolors = np.tile(base_rgba, (V.shape[0], U.shape[1], 1))
 
-    # A safe, standard alpha blending function
     def blend_layer(base_colors, layer_color, weight):
         w = np.clip(weight, 0.0, 1.0)[..., None]
         return base_colors * (1.0 - w) + layer_color[None, None, :] * w
 
-    # 1. Render Obstacles with a hard cut-off
+    # 1. Render Obstacles
     cell_count = map_valid.size
     grid_size = int(round(math.sqrt(cell_count)))
     if grid_size * grid_size == cell_count:
@@ -130,11 +135,10 @@ def main():
             + fu * fv * o11
         )
         
-        # Hard binary threshold: >= 0.5 becomes 1.0, else 0.0
         obstacle_weight = (obstacle_field >= 0.5).astype(float)
         facecolors = blend_layer(facecolors, obstacle_rgba, obstacle_weight)
 
-    # 2. Render Path and Markers with strict distance cut-offs
+    # 2. Render Path and Markers
     U32 = U.astype(np.float32)
     V32 = V.astype(np.float32)
 
@@ -145,7 +149,6 @@ def main():
 
     grid_step_u = (2.0 * math.pi) / max(1, (u_res - 1))
 
-    # Calculate minimal squared distance to the path curve
     path_min_dist2 = np.full(U.shape, np.inf, dtype=np.float32)
     path_chunk = 64
     for idx in range(0, len(path_t1), path_chunk):
@@ -156,12 +159,11 @@ def main():
         dist2 = du * du + dv * dv
         path_min_dist2 = np.minimum(path_min_dist2, np.min(dist2, axis=0))
 
-    # Binary cut-off for a thin, sharp path
-    path_radius = 0.5 * grid_step_u
+    # FIX: Increased multiplier from 0.5 to 1.5 to guarantee intersection with the discrete geometry faces
+    path_radius = 1.5 * grid_step_u
     path_weight = (path_min_dist2 <= path_radius**2).astype(float)
     facecolors = blend_layer(facecolors, path_rgba, path_weight)
 
-    # Binary cut-off for sharp markers
     marker_radius = 1.5 * grid_step_u
     s_dist2 = get_angular_dist2(start_angles[0], start_angles[1])
     g_dist2 = get_angular_dist2(goal_angles[0], goal_angles[1])
@@ -172,10 +174,9 @@ def main():
     facecolors = blend_layer(facecolors, start_rgba, start_weight)
     facecolors = blend_layer(facecolors, goal_rgba, goal_weight)
 
-    # Sanitize floating point errors before rendering to prevent ValueError crashes
     facecolors = np.clip(facecolors, 0.0, 1.0)
 
-    # 3. Render the painted Surface (Allows proper occlusion)
+    # 3. Render Surface
     top_light = LightSource(azdeg=0.0, altdeg=90.0)
     ax.plot_surface(
         surf_x, surf_y, surf_z,
@@ -185,8 +186,8 @@ def main():
         antialiased=True, shade=True, lightsource=top_light
     )
 
-    # 4. Perfect 3D Proportional Camera Setup
-    ax.set_title("2-Link Planar Arm on T^2 with RRT* and FCL", pad=18, color="#d9d9d9")
+    # 4. Axes & Camera Configuration
+    ax.set_title(title_text, pad=18, color="#d9d9d9")
     ax.set_xlabel("x", color="#d0d0d0")
     ax.set_ylabel("y", color="#d0d0d0")
     ax.set_zlabel("z", color="#d0d0d0")
@@ -197,21 +198,18 @@ def main():
         axis._axinfo["grid"]["color"] = (0.75, 0.75, 0.75, 0.45)
         axis._axinfo["grid"]["linewidth"] = 0.7
 
-    # Calculate exact physical limits of the torus
     limit_xy = major + minor
     limit_z = minor
 
-    # Enforce these limits exactly so Matplotlib doesn't auto-warp the axes
     ax.set_xlim(-limit_xy, limit_xy)
     ax.set_ylim(-limit_xy, limit_xy)
     ax.set_zlim(-limit_z, limit_z)
-    
-    # Force the 3D bounding box to match the physical limits 
     ax.set_box_aspect((1.0, 1.0, limit_z / limit_xy))
     ax.view_init(elev=elev, azim=azim)
 
+    # Dynamically inject the label for the path line
     legend_handles = [
-        Line2D([0], [0], color="#ffd34d", lw=4.0, label="RRT* path"),
+        Line2D([0], [0], color="#ffd34d", lw=4.0, label=path_label),
         Line2D([0], [0], marker="o", linestyle="", markersize=9,
                markerfacecolor="#66ff99", markeredgecolor="black", label="start"),
         Line2D([0], [0], marker="o", linestyle="", markersize=9,
