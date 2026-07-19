@@ -45,7 +45,8 @@ $$
 For collision, each link transform is evaluated at the center of its box geometry:
 
 - Link 1 center: $\left(\frac{l_1}{2}\cos\theta_1,\ \frac{l_1}{2}\sin\theta_1\right)$
-- Link 2 center: 
+- Link 2 center:
+
 $$
 \left(l_1\cos\theta_1 + \frac{l_2}{2}\cos(\theta_1+\theta_2),\
 l_1\sin\theta_1 + \frac{l_2}{2}\sin(\theta_1+\theta_2)\right)
