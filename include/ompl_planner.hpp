@@ -28,7 +28,7 @@ class OMPLPlanner : public Planner
 public:
     explicit OMPLPlanner(std::shared_ptr<RobotMechanism> arm);
 
-    void setStateValidityChecker(const std::function<bool(const ompl::base::State *)> &checker);
+    void setStateValidityChecker(const std::function<bool(const JointManifoldState &)> &checker);
     void configureRRTStar(const RRTStarSettings &settings);
 
     void setStartGoal(const JointManifoldState &start, const JointManifoldState &goal) override;
@@ -39,7 +39,12 @@ public:
     [[nodiscard]] double getPathLength() const override;
 
 private:
+    [[nodiscard]] std::shared_ptr<ompl::base::StateSpace> createStateSpace() const;
+    [[nodiscard]] JointManifoldState manifoldStateFromOMPL(const ompl::base::State *state) const;
+    void setOMPLStateFromManifold(const JointManifoldState &state, ompl::base::State *outState) const;
+
     std::shared_ptr<RobotMechanism> arm_;
+    std::shared_ptr<ompl::base::StateSpace> stateSpace_;
     std::shared_ptr<ompl::geometric::SimpleSetup> simpleSetup_;
     int interpolationPoints_{100};
 };

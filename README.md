@@ -22,6 +22,9 @@ planner: ompl   # or ceres
 
 The base abstraction is `RobotMechanism`, intended for multiple mechanisms (not only the current 2-link planar arm example).
 
+It is manifold-only and planner-agnostic: FK/IK, interpolation, distances, and collision geometry are defined only on manifold coordinates.
+Any OMPL `State` handling (including `SO2` scalar assignment/extraction) is isolated inside `OMPLPlanner`.
+
 ### Mechanism Specification
 
 Current implemented mechanism instance is a 2-link planar revolute arm:
@@ -31,7 +34,18 @@ Current implemented mechanism instance is a 2-link planar revolute arm:
 - Link lengths: $l_1, l_2$
 - Collision geometry per link: 3D boxes in FCL (length = link length, thickness from config, and finite height)
 
-In code, this is represented with manifold states on $S^1$ per joint, and OMPL uses `SO2` state spaces for the same topology.
+In code, each revolute joint is represented directly as a point on $S^1$:
+
+$$
+v_i = (c_i,s_i) = (\cos\theta_i,\sin\theta_i),\quad c_i^2+s_i^2=1.
+$$
+
+Joint composition for this 2R arm is group multiplication on $SO(2)$ encoded in $(c,s)$ pairs:
+
+$$
+(c_{12},s_{12}) = (c_1,s_1)\circ(c_2,s_2)
+= (c_1c_2 - s_1s_2,\ s_1c_2 + c_1s_2).
+$$
 
 ### Forward Kinematics (FK)
 
@@ -52,7 +66,18 @@ $$
 l_1\sin\theta_1 + \frac{l_2}{2}\sin(\theta_1+\theta_2)\right)
 $$
 
-Rotations are about world $z$ using $R_z(\theta)$, and the end-effector orientation is $R_z(\theta_1+\theta_2)$.
+Rotations are embedded directly from manifold coordinates into $SO(2)\subset SE(3)$ (no angle reconstruction):
+
+$$
+R(c,s)=
+\begin{bmatrix}
+c & -s & 0\\
+s & \phantom{-}c & 0\\
+0 & 0 & 1
+\end{bmatrix},
+$$
+
+with end-effector orientation using $(c_{12},s_{12})$.
 
 ### FK with Matrix Lie Groups
 
@@ -82,7 +107,7 @@ $$
 
 The implementation uses 3D rigid transforms (`fcl::Transform3d`) with planar motion embedded in $SE(3)$ (z-translation fixed to 0, rotation only around z).
 
-### Geometric IK (Analytic, Manifold Output)
+### IK with Matrix Lie Groups
 
 Given target point $(p_x,p_y)$, the code solves:
 
@@ -92,24 +117,42 @@ $$
 
 If $c_2 \notin [-1,1]$, target is unreachable.
 
-Otherwise two branches are used:
+Otherwise two elbow branches are constructed on $S^1$ for joint 2 directly:
 
 $$
-θ_2^{(\pm)} = \pm\arccos(c_2),
+(c_2,s_2)^{(+)} = (c_2, +\sqrt{1-c_2^2}), \qquad
+(c_2,s_2)^{(-)} = (c_2, -\sqrt{1-c_2^2}).
+$$
+
+For each branch, joint 1 is solved by a linear $2\times 2$ system in $(c_1,s_1)$ (no trigonometric inverse or angle wrapping in backend IK):
+
+$$
+\begin{bmatrix} p_x \\ p_y \end{bmatrix}
+=
+\begin{bmatrix}
+k_1 & -k_2 \\
+k_2 & \phantom{-}k_1
+\end{bmatrix}
+\begin{bmatrix} c_1 \\ s_1 \end{bmatrix},
+\qquad
+k_1=l_1+l_2 c_2,\; k_2=l_2 s_2,
 $$
 
 $$
-θ_1^{(\pm)} = \mathrm{atan2}(p_y,p_x) -
-\mathrm{atan2}\bigl(l_2\sin\theta_2^{(\pm)},\ l_1 + l_2\cos\theta_2^{(\pm)}\bigr).
+c_1 = \frac{k_1 p_x + k_2 p_y}{p_x^2+p_y^2},
+\qquad
+s_1 = \frac{-k_2 p_x + k_1 p_y}{p_x^2+p_y^2}.
 $$
 
-The branch is chosen by manifold proximity to a manifold seed state (used to keep branch continuity along the waypoint sequence). Here $\mathrm{atan2}(y,x)$ is the two-argument arctangent.
+At the origin singularity ($p_x^2+p_y^2\approx 0$), $\theta_1$ is underdetermined for the folded-elbow case; implementation uses the seed state's joint-1 direction to keep continuity.
 
-Important implementation detail:
+The final branch is chosen by manifold proximity to the manifold seed state.
+
+Important implementation details:
 
 - IK output is manifold-native: each joint is returned as a unit vector $[\cos\theta, \sin\theta] \in S^1$.
-- Backend IK/FK/planners do not apply scalar angle wrapping.
-- Scalar angles are only used at boundaries where external APIs require them (for example OMPL `SO2` scalar field assignment and CSV export for plotting).
+- Backend IK/FK/collision/planners do not apply scalar angle wrapping.
+- Scalar angles are only used at explicit boundaries where external APIs require them (OMPL `SO2` internal state assignment in `OMPLPlanner`, and CSV export for plotting).
 
 ### Manifold Representation Policy
 

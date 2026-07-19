@@ -20,28 +20,6 @@ FCLCollisionChecker::FCLCollisionChecker(std::shared_ptr<RobotMechanism> arm,
     }
 }
 
-bool FCLCollisionChecker::isStateValid(const ompl::base::State* state) const
-{
-    // Clear simply resets the size to 0 but keeps the capacity, ensuring zero heap allocations
-    fkTransformsCache_.clear();
-    arm_->computeForwardKinematics(state, fkTransformsCache_);
-    
-    auto geometries = arm_->getCollisionGeometries();
-
-    for (std::size_t i = 0; i < fkTransformsCache_.size(); ++i)
-    {
-        fcl::CollisionObjectd link(geometries[i], fkTransformsCache_[i]);
-        for (const auto& obstacle : obstacleObjects_)
-        {
-            if (inCollision(link, obstacle))
-            {
-                return false;
-            }
-        }
-    }
-    return true;
-}
-
 bool FCLCollisionChecker::isManifoldStateValid(const JointManifoldState &state) const
 {
     fkTransformsCache_.clear();

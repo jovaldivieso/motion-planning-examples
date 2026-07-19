@@ -5,8 +5,6 @@
 #include <stdexcept>
 #include <ceres/ceres.h>
 
-namespace ob = ompl::base;
-
 namespace motion_planning_examples
 {
 
@@ -153,22 +151,17 @@ bool CeresPlanner::solve(double /*solveTimeSeconds*/)
     
     if (!summary.IsSolutionUsable()) return false;
 
-    // Delegate collision check back to OMPL via generic states
-    ob::State* state = arm_->getStateSpace()->allocState();
     bool valid = true;
     for (int i = 0; i < numWaypoints_; ++i)
     {
         JointManifoldState flatState = {v1Path_[2*i], v1Path_[2*i+1], v2Path_[2*i], v2Path_[2*i+1]};
-        arm_->setOMPLState(flatState, state);
-
-        if (!checker_->isStateValid(state))
+        if (!checker_->isManifoldStateValid(flatState))
         {
             std::cerr << "Collision detected on straight line at step " << i << std::endl;
             valid = false;
             break;
         }
     }
-    arm_->getStateSpace()->freeState(state);
     return valid;
 }
 

@@ -3,9 +3,6 @@
 #include <algorithm>
 #include <array>
 #include <cmath>
-#include <ompl/base/spaces/SO2StateSpace.h>
-
-namespace ob = ompl::base;
 
 namespace motion_planning_examples
 {
@@ -13,41 +10,11 @@ namespace motion_planning_examples
 TwoDOFPlanarArm::TwoDOFPlanarArm(double link1Length, double link2Length, double linkThickness, double objectHeight)
     : l1_(link1Length), l2_(link2Length)
 {
-    auto compound = std::make_shared<ob::CompoundStateSpace>();
-    compound->addSubspace(std::make_shared<ob::SO2StateSpace>(), 1.0);
-    compound->addSubspace(std::make_shared<ob::SO2StateSpace>(), 1.0);
-    compound->lock();
-    space_ = compound;
-
     link1Geometry_ = std::make_shared<fcl::Boxd>(l1_, linkThickness, objectHeight);
     link2Geometry_ = std::make_shared<fcl::Boxd>(l2_, linkThickness, objectHeight);
 }
 
-std::shared_ptr<ob::StateSpace> TwoDOFPlanarArm::getStateSpace() const { return space_; }
-
-void TwoDOFPlanarArm::computeForwardKinematics(const ob::State* state, std::vector<fcl::Transform3d>& transforms) const
-{
-    const auto* compound = state->as<ob::CompoundStateSpace::StateType>();
-    const double theta1 = compound->as<ob::SO2StateSpace::StateType>(0)->value;
-    const double theta2 = compound->as<ob::SO2StateSpace::StateType>(1)->value;
-
-    fcl::Transform3d tf1 = fcl::Transform3d::Identity();
-    tf1.linear() = Eigen::AngleAxisd(theta1, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-    tf1.translation() << 0.5 * l1_ * std::cos(theta1), 0.5 * l1_ * std::sin(theta1), 0.0;
-
-    const double jointX = l1_ * std::cos(theta1);
-    const double jointY = l1_ * std::sin(theta1);
-    const double link2Yaw = theta1 + theta2;
-    
-    fcl::Transform3d tf2 = fcl::Transform3d::Identity();
-    tf2.linear() = Eigen::AngleAxisd(link2Yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-    tf2.translation() << jointX + 0.5 * l2_ * std::cos(link2Yaw), 
-                         jointY + 0.5 * l2_ * std::sin(link2Yaw), 0.0;
-
-    transforms.clear();
-    transforms.push_back(tf1);
-    transforms.push_back(tf2);
-}
+std::size_t TwoDOFPlanarArm::getJointCount() const { return 2; }
 
 void TwoDOFPlanarArm::computeForwardKinematicsFromManifoldState(const JointManifoldState &state,
                                                                 std::vector<fcl::Transform3d> &transforms) const
@@ -60,33 +27,23 @@ void TwoDOFPlanarArm::computeForwardKinematicsFromManifoldState(const JointManif
     const double s12 = s1 * state[2] + c1 * state[3];
 
     fcl::Transform3d tf1 = fcl::Transform3d::Identity();
-    tf1.linear() = Eigen::AngleAxisd(std::atan2(s1, c1), Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    tf1.linear()(0, 0) = c1;
+    tf1.linear()(0, 1) = -s1;
+    tf1.linear()(1, 0) = s1;
+    tf1.linear()(1, 1) = c1;
     tf1.translation() << 0.5 * l1_ * c1, 0.5 * l1_ * s1, 0.0;
 
     fcl::Transform3d tf2 = fcl::Transform3d::Identity();
-    tf2.linear() = Eigen::AngleAxisd(std::atan2(s12, c12), Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    tf2.linear()(0, 0) = c12;
+    tf2.linear()(0, 1) = -s12;
+    tf2.linear()(1, 0) = s12;
+    tf2.linear()(1, 1) = c12;
     tf2.translation() << l1_ * c1 + 0.5 * l2_ * c12,
                          l1_ * s1 + 0.5 * l2_ * s12, 0.0;
 
     transforms.clear();
     transforms.push_back(tf1);
     transforms.push_back(tf2);
-}
-
-void TwoDOFPlanarArm::computeEndEffectorTransform(const ob::State* state, fcl::Transform3d& transform) const
-{
-    const auto* compound = state->as<ob::CompoundStateSpace::StateType>();
-    const double theta1 = compound->as<ob::SO2StateSpace::StateType>(0)->value;
-    const double theta2 = compound->as<ob::SO2StateSpace::StateType>(1)->value;
-
-    const double jointX = l1_ * std::cos(theta1);
-    const double jointY = l1_ * std::sin(theta1);
-    const double link2Yaw = theta1 + theta2;
-
-    transform = fcl::Transform3d::Identity();
-    transform.linear() = Eigen::AngleAxisd(link2Yaw, Eigen::Vector3d::UnitZ()).toRotationMatrix();
-    transform.translation() << jointX + l2_ * std::cos(link2Yaw), 
-                               jointY + l2_ * std::sin(link2Yaw), 0.0;
 }
 
 void TwoDOFPlanarArm::computeEndEffectorFromManifoldState(const JointManifoldState &state,
@@ -100,7 +57,10 @@ void TwoDOFPlanarArm::computeEndEffectorFromManifoldState(const JointManifoldSta
     const double s12 = s1 * state[2] + c1 * state[3];
 
     transform = fcl::Transform3d::Identity();
-    transform.linear() = Eigen::AngleAxisd(std::atan2(s12, c12), Eigen::Vector3d::UnitZ()).toRotationMatrix();
+    transform.linear()(0, 0) = c12;
+    transform.linear()(0, 1) = -s12;
+    transform.linear()(1, 0) = s12;
+    transform.linear()(1, 1) = c12;
     transform.translation() << l1_ * c1 + l2_ * c12,
                                l1_ * s1 + l2_ * s12, 0.0;
 }
@@ -119,6 +79,7 @@ bool TwoDOFPlanarArm::computeInverseKinematics(const std::vector<double>& target
     double py = targetWorkspace[1];
 
     double p_sq = px * px + py * py;
+    constexpr double kEps = 1e-12;
     double val = (p_sq - l1_ * l1_ - l2_ * l2_) / (2.0 * l1_ * l2_);
     
     if (val < -1.0 || val > 1.0) return false; // Unreachable
@@ -132,6 +93,15 @@ bool TwoDOFPlanarArm::computeInverseKinematics(const std::vector<double>& target
 
     // 2. Solve for Joint 1 as a 2x2 linear system (No trigonometry)
     auto solveJoint1 = [&](const std::array<double, 2>& j2) -> std::array<double, 2> {
+        if (p_sq < kEps)
+        {
+            // At the origin singularity (e.g. l1 == l2 and elbow folded), theta1 is underdetermined.
+            // Reuse seed direction to preserve branch continuity.
+            const double n = std::hypot(seedState[0], seedState[1]);
+            if (n < kEps) return {1.0, 0.0};
+            return {seedState[0] / n, seedState[1] / n};
+        }
+
         double k1 = l1_ + l2_ * j2[0];
         double k2 = l2_ * j2[1];
         
@@ -156,22 +126,6 @@ bool TwoDOFPlanarArm::computeInverseKinematics(const std::vector<double>& target
 }
 
 std::vector<double> TwoDOFPlanarArm::getKinematicParameters() const { return {l1_, l2_}; }
-
-JointManifoldState TwoDOFPlanarArm::getManifoldState(const ompl::base::State* state) const
-{
-    const auto* compound = state->as<ob::CompoundStateSpace::StateType>();
-    double t1 = compound->as<ob::SO2StateSpace::StateType>(0)->value;
-    double t2 = compound->as<ob::SO2StateSpace::StateType>(1)->value;
-    return {std::cos(t1), std::sin(t1), std::cos(t2), std::sin(t2)};
-}
-
-void TwoDOFPlanarArm::setOMPLState(const JointManifoldState& state, ompl::base::State* outState) const
-{
-    if (state.size() < 4) return;
-    auto* compound = outState->as<ob::CompoundStateSpace::StateType>();
-    compound->as<ob::SO2StateSpace::StateType>(0)->value = std::atan2(state[1], state[0]);
-    compound->as<ob::SO2StateSpace::StateType>(1)->value = std::atan2(state[3], state[2]);
-}
 
 JointManifoldState TwoDOFPlanarArm::interpolateManifoldState(const JointManifoldState& a, const JointManifoldState& b, double t) const
 {

@@ -10,12 +10,10 @@ class TwoDOFPlanarArm : public RobotMechanism
 public:
     TwoDOFPlanarArm(double link1Length, double link2Length, double linkThickness, double objectHeight);
 
-    [[nodiscard]] std::shared_ptr<ompl::base::StateSpace> getStateSpace() const override;
+    [[nodiscard]] std::size_t getJointCount() const override;
 
-    void computeForwardKinematics(const ompl::base::State* state, std::vector<fcl::Transform3d>& transforms) const override;
     void computeForwardKinematicsFromManifoldState(const JointManifoldState &state, std::vector<fcl::Transform3d> &transforms) const override;
 
-    void computeEndEffectorTransform(const ompl::base::State* state, fcl::Transform3d& transform) const override;
     void computeEndEffectorFromManifoldState(const JointManifoldState &state, fcl::Transform3d &transform) const override;
 
     [[nodiscard]] std::vector<std::shared_ptr<fcl::CollisionGeometryd>> getCollisionGeometries() const override;
@@ -26,17 +24,13 @@ public:
 
     [[nodiscard]] std::vector<double> getKinematicParameters() const override;
 
-    [[nodiscard]] JointManifoldState getManifoldState(const ompl::base::State* state) const override;
-    void setOMPLState(const JointManifoldState& state, ompl::base::State* outState) const override;
-
     [[nodiscard]] JointManifoldState interpolateManifoldState(const JointManifoldState& a, const JointManifoldState& b, double t) const override;
     [[nodiscard]] double computeManifoldDistance(const JointManifoldState& a, const JointManifoldState& b) const override;
 
 private:
     double l1_;
     double l2_;
-    
-    std::shared_ptr<ompl::base::StateSpace> space_;
+
     std::shared_ptr<fcl::CollisionGeometryd> link1Geometry_;
     std::shared_ptr<fcl::CollisionGeometryd> link2Geometry_;
 };

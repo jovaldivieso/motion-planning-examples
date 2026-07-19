@@ -10,9 +10,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include <ompl/base/StateSpace.h>
-#include <ompl/base/spaces/SO2StateSpace.h>
-
 #include "manifold_types.hpp"
 #include "robot_mechanism.hpp"
 #include "two_dof_planar_arm.hpp"
@@ -21,7 +18,6 @@
 #include "ceres_planner.hpp"
 #include "fcl_collision_checker.hpp"
 
-namespace ob = ompl::base;
 namespace fs = std::filesystem;
 using motion_planning_examples::JointManifoldState;
 using motion_planning_examples::RobotMechanism;
@@ -244,7 +240,6 @@ void writePathCsv(const fs::path &path, const motion_planning_examples::Manifold
 }
 
 void writeCollisionMapCsv(const fs::path &path,
-                          const std::shared_ptr<ob::StateSpace> &space,
                           const FCLCollisionChecker &checker,
                           int gridResolution)
 {
@@ -252,23 +247,22 @@ void writeCollisionMapCsv(const fs::path &path,
     out << "theta1,theta2,valid\n";
     const double pi = std::acos(-1.0);
 
-    ob::State *state = space->allocState();
-    auto *compound = state->as<ob::CompoundStateSpace::StateType>();
-
     for (int i = 0; i < gridResolution; ++i)
     {
         const double theta1 = -pi + (2.0 * pi * i) / static_cast<double>(gridResolution - 1);
+        const double c1 = std::cos(theta1);
+        const double s1 = std::sin(theta1);
         for (int j = 0; j < gridResolution; ++j)
         {
             const double theta2 = -pi + (2.0 * pi * j) / static_cast<double>(gridResolution - 1);
-            compound->as<ob::SO2StateSpace::StateType>(0)->value = theta1;
-            compound->as<ob::SO2StateSpace::StateType>(1)->value = theta2;
+            const double c2 = std::cos(theta2);
+            const double s2 = std::sin(theta2);
+            const JointManifoldState manifoldState = {c1, s1, c2, s2};
 
-            const bool valid = checker.isStateValid(state);
+            const bool valid = checker.isManifoldStateValid(manifoldState);
             out << theta1 << ',' << theta2 << ',' << (valid ? 1 : 0) << '\n';
         }
     }
-    space->freeState(state);
 }
 
 }  // namespace
@@ -315,7 +309,7 @@ int main(int argc, char **argv)
     {
         std::cout << "Configuring OMPL RRT* C-Space Planner...\n";
         auto ompl = std::make_shared<OMPLPlanner>(robot); 
-        ompl->setStateValidityChecker([&](const ob::State* s) { return checker->isStateValid(s); });
+        ompl->setStateValidityChecker([&](const JointManifoldState &state) { return checker->isManifoldStateValid(state); });
         
         RRTStarSettings settings;
         settings.range = cfg.range;
@@ -350,7 +344,7 @@ int main(int argc, char **argv)
     const fs::path obstaclesCsv = "obstacles.csv";
 
     writePathCsv(pathCsv, pathManifoldStates);
-    writeCollisionMapCsv(collisionCsv, robot->getStateSpace(), *checker, cfg.collisionGridResolution);
+    writeCollisionMapCsv(collisionCsv, *checker, cfg.collisionGridResolution);
     writeObstacleCsv(obstaclesCsv, obstacles);
 
     std::cout << "Found solution with " << pathManifoldStates.size() << " states.\n";

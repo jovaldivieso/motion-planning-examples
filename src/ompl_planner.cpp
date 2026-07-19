@@ -1,8 +1,11 @@
 #include "ompl_planner.hpp"
 
+#include <cmath>
 #include <stdexcept>
+#include <ompl/base/StateSpace.h>
 #include <ompl/geometric/SimpleSetup.h>
 #include <ompl/geometric/planners/rrt/RRTstar.h>
+#include <ompl/base/spaces/SO2StateSpace.h>
 
 namespace ob = ompl::base;
 namespace og = ompl::geometric;
@@ -10,15 +13,62 @@ namespace og = ompl::geometric;
 namespace motion_planning_examples
 {
 
+std::shared_ptr<ob::StateSpace> OMPLPlanner::createStateSpace() const
+{
+    auto compound = std::make_shared<ob::CompoundStateSpace>();
+    for (std::size_t i = 0; i < arm_->getJointCount(); ++i)
+    {
+        compound->addSubspace(std::make_shared<ob::SO2StateSpace>(), 1.0);
+    }
+    compound->lock();
+    return compound;
+}
+
+JointManifoldState OMPLPlanner::manifoldStateFromOMPL(const ob::State *state) const
+{
+    const auto *compound = state->as<ob::CompoundStateSpace::StateType>();
+    const unsigned int subspaceCount = stateSpace_->as<ob::CompoundStateSpace>()->getSubspaceCount();
+
+    JointManifoldState manifold;
+    manifold.reserve(2 * subspaceCount);
+    for (unsigned int i = 0; i < subspaceCount; ++i)
+    {
+        const double theta = compound->as<ob::SO2StateSpace::StateType>(i)->value;
+        manifold.push_back(std::cos(theta));
+        manifold.push_back(std::sin(theta));
+    }
+    return manifold;
+}
+
+void OMPLPlanner::setOMPLStateFromManifold(const JointManifoldState &state, ob::State *outState) const
+{
+    auto *compound = outState->as<ob::CompoundStateSpace::StateType>();
+    const unsigned int subspaceCount = stateSpace_->as<ob::CompoundStateSpace>()->getSubspaceCount();
+    if (state.size() < 2 * subspaceCount)
+    {
+        throw std::invalid_argument("Manifold state dimension does not match OMPL state space");
+    }
+
+    for (unsigned int i = 0; i < subspaceCount; ++i)
+    {
+        const double c = state[2 * i];
+        const double s = state[2 * i + 1];
+        compound->as<ob::SO2StateSpace::StateType>(i)->value = std::atan2(s, c);
+    }
+}
+
 OMPLPlanner::OMPLPlanner(std::shared_ptr<RobotMechanism> arm)
     : arm_(std::move(arm))
 {
-    simpleSetup_ = std::make_shared<og::SimpleSetup>(arm_->getStateSpace());
+    stateSpace_ = createStateSpace();
+    simpleSetup_ = std::make_shared<og::SimpleSetup>(stateSpace_);
 }
 
-void OMPLPlanner::setStateValidityChecker(const std::function<bool(const ob::State *)> &checker)
+void OMPLPlanner::setStateValidityChecker(const std::function<bool(const JointManifoldState &)> &checker)
 {
-    simpleSetup_->setStateValidityChecker(checker);
+    simpleSetup_->setStateValidityChecker([this, checker](const ob::State *state) {
+        return checker(manifoldStateFromOMPL(state));
+    });
 }
 
 void OMPLPlanner::configureRRTStar(const RRTStarSettings &settings)
@@ -33,11 +83,11 @@ void OMPLPlanner::configureRRTStar(const RRTStarSettings &settings)
 
 void OMPLPlanner::setStartGoal(const JointManifoldState &start, const JointManifoldState &goal)
 {
-    ob::ScopedState<> startState(arm_->getStateSpace());
-    arm_->setOMPLState(start, startState.get());
+    ob::ScopedState<> startState(stateSpace_);
+    setOMPLStateFromManifold(start, startState.get());
 
-    ob::ScopedState<> goalState(arm_->getStateSpace());
-    arm_->setOMPLState(goal, goalState.get());
+    ob::ScopedState<> goalState(stateSpace_);
+    setOMPLStateFromManifold(goal, goalState.get());
 
     simpleSetup_->setStartAndGoalStates(startState, goalState);
 }
@@ -65,7 +115,7 @@ ManifoldPath OMPLPlanner::getPathManifoldStates() const
 
     for (std::size_t i = 0; i < path.getStateCount(); ++i)
     {
-        waypoints.push_back(arm_->getManifoldState(path.getState(i)));
+        waypoints.push_back(manifoldStateFromOMPL(path.getState(i)));
     }
 
     return waypoints;

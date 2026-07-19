@@ -4,7 +4,6 @@
 #include <vector>
 
 #include <fcl/fcl.h>
-#include <ompl/base/State.h>
 #include "robot_mechanism.hpp"
 
 namespace motion_planning_examples
@@ -24,7 +23,6 @@ public:
                         double objectHeight,
                         const std::vector<SquareObstacle>& obstacles);
 
-    [[nodiscard]] bool isStateValid(const ompl::base::State* state) const;
     [[nodiscard]] bool isManifoldStateValid(const JointManifoldState &state) const;
 
 private:
