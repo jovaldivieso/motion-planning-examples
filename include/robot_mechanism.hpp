@@ -1,5 +1,7 @@
 #pragma once
 
+#include "manifold_types.hpp"
+
 #include <memory>
 #include <vector>
 
@@ -21,17 +23,26 @@ public:
     virtual void computeForwardKinematics(const ompl::base::State* state, 
                                           std::vector<fcl::Transform3d>& transforms) const = 0;
 
+    // Manifold-native FK API: state is represented on S1 per joint.
+    virtual void computeForwardKinematicsFromManifoldState(const JointManifoldState &state,
+                                                           std::vector<fcl::Transform3d> &transforms) const = 0;
+
     // Evaluates the task space pose of the End-Effector / Tool Center Point
     virtual void computeEndEffectorTransform(const ompl::base::State* state, 
                                              fcl::Transform3d& transform) const = 0;
 
+    // Manifold-native end-effector API.
+    virtual void computeEndEffectorFromManifoldState(const JointManifoldState &state,
+                                                     fcl::Transform3d &transform) const = 0;
+
     // Provides the geometric shapes attached to each link for collision checking
     [[nodiscard]] virtual std::vector<std::shared_ptr<fcl::CollisionGeometryd>> getCollisionGeometries() const = 0;
 
-    // Generic interface to request an Inverse Kinematics seed for trajectory optimizers
+    // Generic interface to request an Inverse Kinematics solution on manifold coordinates.
+    // Uses a seedState to resolve redundancies (e.g. elbow up vs down).
     [[nodiscard]] virtual bool computeInverseKinematics(const std::vector<double>& targetWorkspace, 
-                                                        bool hint, 
-                                                        std::vector<double>& seedState) const = 0;
+                                                        const JointManifoldState &seedState,
+                                                        JointManifoldState &solutionState) const = 0;
 
     // Extracts numeric kinematic parameters (e.g. link lengths) required by analytic AutoDiff functors
     [[nodiscard]] virtual std::vector<double> getKinematicParameters() const = 0;

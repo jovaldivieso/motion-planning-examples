@@ -18,12 +18,11 @@ public:
                  std::shared_ptr<FCLCollisionChecker> checker,
                  int numWaypoints = 100);
 
-    // Ceres internally converts C-Space goals to Workspace tracking lines
-    void setStartGoal(double startTheta1, double startTheta2, double goalTheta1, double goalTheta2) override;
+    void setStartGoal(const JointManifoldState &start, const JointManifoldState &goal) override;
 
     bool solve(double solveTimeSeconds) override;
 
-    [[nodiscard]] std::vector<std::pair<double, double>> getPathAngles() const override;
+    [[nodiscard]] ManifoldPath getPathManifoldStates() const override;
     [[nodiscard]] double getPathLength() const override;
 
 private:
@@ -36,7 +35,10 @@ private:
     double startY_{0.0};
     double goalX_{0.0};
     double goalY_{0.0};
-    bool elbowUp_{true};
+
+    // Stored as manifold-native seed states.
+    JointManifoldState startState_;
+    JointManifoldState goalState_;
 
     std::vector<double> v1Path_;
     std::vector<double> v2Path_;

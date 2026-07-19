@@ -2,6 +2,7 @@
 import argparse
 import csv
 import math
+import os
 import yaml
 
 import matplotlib.pyplot as plt
@@ -39,6 +40,18 @@ def torus_xyz(theta1, theta2, major, minor):
     return x, y, z
 
 
+def with_planner_suffix(path, planner_type):
+    if not path:
+        return path
+
+    root, ext = os.path.splitext(path)
+    for suffix in ("_ceres", "_ompl"):
+        if root.endswith(suffix):
+            root = root[:-len(suffix)]
+            break
+    return f"{root}_{planner_type}{ext}"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Plot torus PDF for arm planning")
     parser.add_argument("--config", required=True, help="Path to the YAML config file")
@@ -66,8 +79,8 @@ def main():
     start_angles = cfg.get("start", [0.0, 0.0])
     goal_angles = cfg.get("goal", [0.0, 0.0])
     
-    output_pdf = cfg.get("output_pdf", "output.pdf")
-    output_video = cfg.get("output_video", "")
+    output_pdf = with_planner_suffix(cfg.get("output_pdf", "output.pdf"), planner_type)
+    output_video = with_planner_suffix(cfg.get("output_video", ""), planner_type)
     video_frames = int(cfg.get("video_frames", 180))
     video_fps = int(cfg.get("video_fps", 30))
     

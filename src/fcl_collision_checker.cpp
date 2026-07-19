@@ -8,6 +8,9 @@ FCLCollisionChecker::FCLCollisionChecker(std::shared_ptr<RobotMechanism> arm,
                                          const std::vector<SquareObstacle>& obstacles)
     : arm_(std::move(arm))
 {
+    // Pre-allocate the exact capacity needed based on the robot's collision bodies
+    fkTransformsCache_.reserve(arm_->getCollisionGeometries().size());
+
     for (const auto& obstacle : obstacles)
     {
         auto geometry = std::make_shared<fcl::Boxd>(obstacle.size, obstacle.size, objectHeight);
@@ -19,15 +22,37 @@ FCLCollisionChecker::FCLCollisionChecker(std::shared_ptr<RobotMechanism> arm,
 
 bool FCLCollisionChecker::isStateValid(const ompl::base::State* state) const
 {
-    std::vector<fcl::Transform3d> transforms;
-    arm_->computeForwardKinematics(state, transforms);
+    // Clear simply resets the size to 0 but keeps the capacity, ensuring zero heap allocations
+    fkTransformsCache_.clear();
+    arm_->computeForwardKinematics(state, fkTransformsCache_);
     
     auto geometries = arm_->getCollisionGeometries();
 
-    for (std::size_t i = 0; i < transforms.size(); ++i)
+    for (std::size_t i = 0; i < fkTransformsCache_.size(); ++i)
     {
-        fcl::CollisionObjectd link(geometries[i], transforms[i]);
+        fcl::CollisionObjectd link(geometries[i], fkTransformsCache_[i]);
         for (const auto& obstacle : obstacleObjects_)
+        {
+            if (inCollision(link, obstacle))
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+bool FCLCollisionChecker::isManifoldStateValid(const JointManifoldState &state) const
+{
+    fkTransformsCache_.clear();
+    arm_->computeForwardKinematicsFromManifoldState(state, fkTransformsCache_);
+
+    auto geometries = arm_->getCollisionGeometries();
+
+    for (std::size_t i = 0; i < fkTransformsCache_.size(); ++i)
+    {
+        fcl::CollisionObjectd link(geometries[i], fkTransformsCache_[i]);
+        for (const auto &obstacle : obstacleObjects_)
         {
             if (inCollision(link, obstacle))
             {

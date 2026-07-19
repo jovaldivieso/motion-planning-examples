@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 import argparse
 import csv
+import os
 import yaml
 
 import matplotlib.pyplot as plt
@@ -39,6 +40,18 @@ def forward_kinematics(t1, t2, l1, l2):
     return np.array([x0, x1, x2]), np.array([y0, y1, y2])
 
 
+def with_planner_suffix(path, planner_type):
+    if not path:
+        return path
+
+    root, ext = os.path.splitext(path)
+    for suffix in ("_ceres", "_ompl"):
+        if root.endswith(suffix):
+            root = root[:-len(suffix)]
+            break
+    return f"{root}_{planner_type}{ext}"
+
+
 def main():
     parser = argparse.ArgumentParser(description="Plot task space for arm planning")
     parser.add_argument("--config", required=True, help="Path to the YAML config file")
@@ -57,17 +70,23 @@ def main():
     start_angles = cfg.get("start", [0.0, 0.0])
     goal_angles = cfg.get("goal", [0.0, 0.0])
 
-    # Dynamic outputs: replace 'torus' with 'task' so they don't overwrite C-space plots
+    planner_type = str(cfg.get("planner", "ompl")).lower()
+
+    # Dynamic outputs: replace 'torus' with 'task' so they do not overwrite C-space plots
     output_pdf = cfg.get("output_pdf", "output.png").replace("torus", "task")
-    if "task" not in output_pdf: output_pdf = "task_" + output_pdf
-    
+    if "task" not in output_pdf:
+        output_pdf = "task_" + output_pdf
+
     output_video = cfg.get("output_video", "").replace("torus", "task")
-    if output_video and "task" not in output_video: output_video = "task_" + output_video
-    
+    if output_video and "task" not in output_video:
+        output_video = "task_" + output_video
+
+    output_pdf = with_planner_suffix(output_pdf, planner_type)
+    output_video = with_planner_suffix(output_video, planner_type)
+
     video_fps = int(cfg.get("video_fps", 30))
 
     # Read planner for dynamic legends and titles
-    planner_type = str(cfg.get("planner", "ompl")).lower()
     if planner_type == "ceres":
         path_label = "Ceres Straight-Line EE path"
         title_text = "2-Link Planar Arm Task Space: Ceres Straight-Line"

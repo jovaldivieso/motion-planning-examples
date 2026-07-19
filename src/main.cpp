@@ -88,6 +88,14 @@ std::optional<std::pair<double, double>> parseAnglePair(const std::string &value
     catch (...) { return std::nullopt; }
 }
 
+motion_planning_examples::JointManifoldState manifoldFromAngles(double theta1, double theta2)
+{
+    return {
+        motion_planning_examples::JointS1{std::cos(theta1), std::sin(theta1)},
+        motion_planning_examples::JointS1{std::cos(theta2), std::sin(theta2)}
+    };
+}
+
 std::unordered_map<std::string, std::string> loadSimpleYaml(const fs::path &path)
 {
     std::ifstream in(path);
@@ -227,13 +235,16 @@ void writeObstacleCsv(const fs::path &path, const std::vector<SquareObstacle> &o
     }
 }
 
-void writePathCsv(const fs::path &path, const std::vector<std::pair<double, double>> &pathAngles)
+void writePathCsv(const fs::path &path, const motion_planning_examples::ManifoldPath &pathStates)
 {
     std::ofstream out(path);
     out << "theta1,theta2\n";
-    for (const auto &angles : pathAngles)
+    for (const auto &state : pathStates)
     {
-        out << angles.first << ',' << angles.second << '\n';
+        if (state.size() < 2) continue;
+        const double theta1 = std::atan2(state[0][1], state[0][0]);
+        const double theta2 = std::atan2(state[1][1], state[1][0]);
+        out << theta1 << ',' << theta2 << '\n';
     }
 }
 
@@ -323,7 +334,9 @@ int main(int argc, char **argv)
     }
 
     // 3. Execution Pipeline
-    planner->setStartGoal(cfg.startTheta1, cfg.startTheta2, cfg.goalTheta1, cfg.goalTheta2);
+    const auto startState = manifoldFromAngles(cfg.startTheta1, cfg.startTheta2);
+    const auto goalState = manifoldFromAngles(cfg.goalTheta1, cfg.goalTheta2);
+    planner->setStartGoal(startState, goalState);
 
     if (!planner->solve(cfg.solveTime))
     {
@@ -332,9 +345,7 @@ int main(int argc, char **argv)
     }
 
     std::cout << "Solution found! Extracting path...\n";
-    planner->simplifyPath(1.5);
-    
-    auto pathAngles = planner->getPathAngles();
+    auto pathStates = planner->getPathManifoldStates();
     double pathLength = planner->getPathLength();
 
     // 4. Data Export
@@ -342,11 +353,11 @@ int main(int argc, char **argv)
     const fs::path collisionCsv = "collision_map.csv";
     const fs::path obstaclesCsv = "obstacles.csv";
 
-    writePathCsv(pathCsv, pathAngles);
+    writePathCsv(pathCsv, pathStates);
     writeCollisionMapCsv(collisionCsv, robot->getStateSpace(), *checker, cfg.collisionGridResolution);
     writeObstacleCsv(obstaclesCsv, obstacles);
 
-    std::cout << "Found solution with " << pathAngles.size() << " states.\n";
+    std::cout << "Found solution with " << pathStates.size() << " states.\n";
     std::cout << "Path length in configuration space: " << pathLength << "\n";
     std::cout << "Successfully generated: " << pathCsv << ", " << collisionCsv << ", and " << obstaclesCsv << '\n';
     

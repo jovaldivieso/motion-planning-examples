@@ -1,5 +1,6 @@
 #include "ompl_planner.hpp"
 
+#include <cmath>
 #include <stdexcept>
 #include <ompl/base/spaces/SO2StateSpace.h>
 #include <ompl/geometric/SimpleSetup.h>
@@ -32,40 +33,48 @@ void OMPLPlanner::configureRRTStar(const RRTStarSettings &settings)
     interpolationPoints_ = settings.pathInterpolationPoints;
 }
 
-void OMPLPlanner::setStartGoal(double startTheta1, double startTheta2, double goalTheta1, double goalTheta2)
+void OMPLPlanner::setStartGoal(const JointManifoldState &start, const JointManifoldState &goal)
 {
-    ob::ScopedState<> start(space_);
-    start[0] = startTheta1;
-    start[1] = startTheta2;
+    if (start.size() < 2 || goal.size() < 2)
+    {
+        throw std::invalid_argument("OMPLPlanner expects at least 2 manifold joints for start and goal");
+    }
 
-    ob::ScopedState<> goal(space_);
-    goal[0] = goalTheta1;
-    goal[1] = goalTheta2;
+    const double startTheta1 = std::atan2(start[0][1], start[0][0]);
+    const double startTheta2 = std::atan2(start[1][1], start[1][0]);
+    const double goalTheta1 = std::atan2(goal[0][1], goal[0][0]);
+    const double goalTheta2 = std::atan2(goal[1][1], goal[1][0]);
 
-    simpleSetup_->setStartAndGoalStates(start, goal);
+    ob::ScopedState<> startState(space_);
+    startState[0] = startTheta1;
+    startState[1] = startTheta2;
+
+    ob::ScopedState<> goalState(space_);
+    goalState[0] = goalTheta1;
+    goalState[1] = goalTheta2;
+
+    simpleSetup_->setStartAndGoalStates(startState, goalState);
 }
 
 bool OMPLPlanner::solve(double solveTimeSeconds)
 {
-    return static_cast<bool>(simpleSetup_->solve(solveTimeSeconds));
-}
-
-void OMPLPlanner::simplifyPath(double maxTime)
-{
-    if (simpleSetup_->haveSolutionPath())
+    bool solved = static_cast<bool>(simpleSetup_->solve(solveTimeSeconds));
+    if (solved)
     {
-        simpleSetup_->simplifySolution(maxTime);
+        // OMPL specific smoothing executed internally
+        simpleSetup_->simplifySolution(1.5);
     }
+    return solved;
 }
 
-std::vector<std::pair<double, double>> OMPLPlanner::getPathAngles() const
+ManifoldPath OMPLPlanner::getPathManifoldStates() const
 {
     if (!simpleSetup_->haveSolutionPath()) throw std::runtime_error("No solution path available");
 
     og::PathGeometric path = simpleSetup_->getSolutionPath();
     path.interpolate(static_cast<unsigned int>(interpolationPoints_));
 
-    std::vector<std::pair<double, double>> waypoints;
+    ManifoldPath waypoints;
     waypoints.reserve(path.getStateCount());
 
     for (std::size_t i = 0; i < path.getStateCount(); ++i)
@@ -73,7 +82,10 @@ std::vector<std::pair<double, double>> OMPLPlanner::getPathAngles() const
         const auto *state = path.getState(i)->as<ob::CompoundStateSpace::StateType>();
         const double theta1 = state->as<ob::SO2StateSpace::StateType>(0)->value;
         const double theta2 = state->as<ob::SO2StateSpace::StateType>(1)->value;
-        waypoints.emplace_back(theta1, theta2);
+        waypoints.push_back({
+            JointS1{std::cos(theta1), std::sin(theta1)},
+            JointS1{std::cos(theta2), std::sin(theta2)}
+        });
     }
 
     return waypoints;

@@ -5,8 +5,6 @@
 #include <cstddef>
 #include <functional>
 #include <memory>
-#include <utility>
-#include <vector>
 
 #include <ompl/base/ScopedState.h>
 #include <ompl/base/StateSpace.h>
@@ -33,11 +31,12 @@ public:
     void setStateValidityChecker(const std::function<bool(const ompl::base::State *)> &checker);
     void configureRRTStar(const RRTStarSettings &settings);
 
-    void setStartGoal(double startTheta1, double startTheta2, double goalTheta1, double goalTheta2) override;
+    void setStartGoal(const JointManifoldState &start, const JointManifoldState &goal) override;
+    
+    // Automatically handles smoothing internally upon a successful solve
     bool solve(double solveTimeSeconds) override;
-    void simplifyPath(double maxTime = 1.0) override;
 
-    [[nodiscard]] std::vector<std::pair<double, double>> getPathAngles() const override;
+    [[nodiscard]] ManifoldPath getPathManifoldStates() const override;
     [[nodiscard]] double getPathLength() const override;
 
 private:

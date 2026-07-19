@@ -25,12 +25,16 @@ public:
                         const std::vector<SquareObstacle>& obstacles);
 
     [[nodiscard]] bool isStateValid(const ompl::base::State* state) const;
+    [[nodiscard]] bool isManifoldStateValid(const JointManifoldState &state) const;
 
 private:
     static bool inCollision(const fcl::CollisionObjectd& a, const fcl::CollisionObjectd& b);
 
     std::shared_ptr<RobotMechanism> arm_;
     std::vector<fcl::CollisionObjectd> obstacleObjects_; 
+    
+    // Reusable cache to prevent heap allocation inside the collision hot-loop
+    mutable std::vector<fcl::Transform3d> fkTransformsCache_;
 };
 
 }  // namespace motion_planning_examples

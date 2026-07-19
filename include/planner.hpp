@@ -1,7 +1,6 @@
 #pragma once
 
-#include <vector>
-#include <utility>
+#include "manifold_types.hpp"
 
 namespace motion_planning_examples
 {
@@ -11,17 +10,14 @@ class Planner
 public:
     virtual ~Planner() = default;
 
-    // Both planners will accept goals cleanly in configuration space
-    virtual void setStartGoal(double startTheta1, double startTheta2, double goalTheta1, double goalTheta2) = 0;
+    // Set start and goal directly on the joint manifold representation.
+    virtual void setStartGoal(const JointManifoldState &start, const JointManifoldState &goal) = 0;
 
     // Solves the problem within the defined configuration timeout
     virtual bool solve(double solveTimeSeconds) = 0;
 
-    // Provides an optional hook for post-processing routines (e.g., OMPL smoothing)
-    virtual void simplifyPath(double /*maxTime*/ = 1.0) {}
-
-    // Retrieves the final unified format output
-    [[nodiscard]] virtual std::vector<std::pair<double, double>> getPathAngles() const = 0;
+    // Retrieve the solution as a path of manifold states (no scalar angle wrapping required).
+    [[nodiscard]] virtual ManifoldPath getPathManifoldStates() const = 0;
     
     [[nodiscard]] virtual double getPathLength() const = 0;
 };
