@@ -72,7 +72,7 @@ $$
 R(c,s)=
 \begin{bmatrix}
 c & -s & 0\\
-s & \phantom{-}c & 0\\
+s & -c & 0\\
 0 & 0 & 1
 \end{bmatrix},
 $$
