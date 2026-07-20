@@ -1,7 +1,9 @@
 #include "ceres_planner.hpp"
 
+#include <array>
 #include <cmath>
 #include <iostream>
+#include <memory>
 #include <stdexcept>
 #include <ceres/ceres.h>
 
@@ -121,16 +123,23 @@ private:
 
 CeresPlanner::CeresPlanner(std::shared_ptr<RobotMechanism> arm, 
                            std::shared_ptr<FCLCollisionChecker> checker,
-                           int numWaypoints)
+               int numWaypoints,
+               const CeresPlannerOptions &options)
     : arm_(std::move(arm)), checker_(std::move(checker)), 
             numWaypoints_(numWaypoints),
-            jointCount_(arm_->getJointCount())
+        jointCount_(arm_->getJointCount()),
+        options_(options)
 {
         if (numWaypoints_ < 2) throw std::invalid_argument("At least 2 waypoints required.");
         if (jointCount_ < 2 || jointCount_ > 3) throw std::invalid_argument("CeresPlanner currently supports 2 or 3 planar joints.");
-    v1Path_.resize(2 * numWaypoints_, 0.0);
-    v2Path_.resize(2 * numWaypoints_, 0.0);
-        if (jointCount_ >= 3) v3Path_.resize(2 * numWaypoints_, 0.0);
+    if (options_.lineConstraintWeight <= 0.0) throw std::invalid_argument("lineConstraintWeight must be positive.");
+    if (options_.smoothnessWeight <= 0.0) throw std::invalid_argument("smoothnessWeight must be positive.");
+    if (options_.maxNumIterations <= 0) throw std::invalid_argument("maxNumIterations must be positive.");
+    jointPaths_.resize(jointCount_);
+    for (auto &jointPath : jointPaths_)
+    {
+        jointPath.resize(numWaypoints_, SO2Coordinates{0.0, 0.0});
+    }
 }
 
 void CeresPlanner::setStartGoal(const JointManifoldState &start, const JointManifoldState &goal)
@@ -138,130 +147,64 @@ void CeresPlanner::setStartGoal(const JointManifoldState &start, const JointMani
     startState_ = start;
     goalState_ = goal;
 
-    startTaskSpace_ = arm_->computeTaskSpaceCoordinates(startState_);
-    goalTaskSpace_ = arm_->computeTaskSpaceCoordinates(goalState_);
+    startTaskSpaceCoordinates_ = arm_->computeTaskSpaceCoordinates(startState_);
+    goalTaskSpaceCoordinates_ = arm_->computeTaskSpaceCoordinates(goalState_);
+    startTaskSpace_ = flattenTaskSpaceCoordinates(startTaskSpaceCoordinates_);
+    goalTaskSpace_ = flattenTaskSpaceCoordinates(goalTaskSpaceCoordinates_);
 
-    if (startTaskSpace_.size() != goalTaskSpace_.size())
+    taskSpaceType_ = getTaskSpaceType(startTaskSpaceCoordinates_);
+    if (taskSpaceType_ != getTaskSpaceType(goalTaskSpaceCoordinates_))
     {
-        throw std::invalid_argument("Start and goal task-space dimensions must match.");
+        throw std::invalid_argument("Start and goal task-space types must match.");
     }
 
-    taskSpaceType_ = inferTaskSpaceType(startTaskSpace_.size());
-    taskSpaceDimension_ = startTaskSpace_.size();
+    taskSpaceDimension_ = getTaskSpaceCoordinateCount(taskSpaceType_);
     if (taskSpaceType_ != TaskSpaceType::Euclidean2D && taskSpaceType_ != TaskSpaceType::SE2)
     {
         throw std::invalid_argument("CeresPlanner currently supports 2D Euclidean or SE(2) task spaces.");
     }
 }
 
-bool CeresPlanner::solve(double /*solveTimeSeconds*/)
+bool CeresPlanner::solve(double solveTimeSeconds)
 {
-    std::vector<double> dir(taskSpaceDimension_, 0.0);
+    std::vector<double> direction;
+    if (!computeTaskSpaceDirection(direction)) return false;
+    if (!initializeWaypoints()) return false;
+    if (!optimizePath(direction, solveTimeSeconds)) return false;
+    return validatePath();
+}
+
+bool CeresPlanner::computeTaskSpaceDirection(std::vector<double> &direction) const
+{
+    direction.assign(taskSpaceDimension_, 0.0);
     for (std::size_t i = 0; i < taskSpaceDimension_; ++i)
     {
-        dir[i] = goalTaskSpace_[i] - startTaskSpace_[i];
+        direction[i] = goalTaskSpace_[i] - startTaskSpace_[i];
     }
 
     double len = 0.0;
-    for (double value : dir) len += value * value;
+    for (double value : direction) len += value * value;
     len = std::sqrt(len);
     if (len < 1e-6) return false;
 
-    for (double &value : dir) value /= len;
+    for (double &value : direction) value /= len;
+    return true;
+}
 
-    if (taskSpaceType_ == TaskSpaceType::Euclidean2D)
-    {
-        double p00 = 1.0 - dir[0] * dir[0];
-        double p01 = -dir[0] * dir[1];
-        double p11 = 1.0 - dir[1] * dir[1];
-
-        for (int i = 0; i < numWaypoints_; ++i)
-        {
-            double t = static_cast<double>(i) / (numWaypoints_ - 1);
-            double px = startTaskSpace_[0] + t * (goalTaskSpace_[0] - startTaskSpace_[0]);
-            double py = startTaskSpace_[1] + t * (goalTaskSpace_[1] - startTaskSpace_[1]);
-
-            JointManifoldState seedState = arm_->interpolateManifoldState(startState_, goalState_, t);
-            JointManifoldState ikSolution;
-            const JointManifoldState *initialState = &seedState;
-            if (arm_->supportsInverseKinematics(taskSpaceType_))
-            {
-                if (!arm_->computeInverseKinematics({px, py}, seedState, ikSolution))
-                {
-                    std::cerr << "Straight line passes through unreachable workspace!" << std::endl;
-                    return false;
-                }
-                initialState = &ikSolution;
-            }
-
-            v1Path_[2 * i] = (*initialState)[0];
-            v1Path_[2 * i + 1] = (*initialState)[1];
-            v2Path_[2 * i] = (*initialState)[2];
-            v2Path_[2 * i + 1] = (*initialState)[3];
-        }
-
-        ceres::Problem problem;
-        ceres::Manifold* sphereManifold = new ceres::SphereManifold<2>;
-
-        std::vector<double> kinParams = arm_->getKinematicParameters();
-        if (kinParams.size() < 2) return false;
-        double l1 = kinParams[0];
-        double l2 = kinParams[1];
-
-        for (int i = 0; i < numWaypoints_; ++i)
-        {
-            problem.AddParameterBlock(&v1Path_[2*i], 2, sphereManifold);
-            problem.AddParameterBlock(&v2Path_[2*i], 2, sphereManifold);
-
-            auto* lineCost = new ceres::AutoDiffCostFunction<StraightLineCost2D, 2, 2, 2>(
-                new StraightLineCost2D(l1, l2, startTaskSpace_[0], startTaskSpace_[1], p00, p01, p11, 20.0));
-            problem.AddResidualBlock(lineCost, nullptr, &v1Path_[2*i], &v2Path_[2*i]);
-        }
-
-        for (int i = 0; i < numWaypoints_ - 1; ++i)
-        {
-            auto* smoothCost1 = new ceres::AutoDiffCostFunction<SmoothnessCost, 2, 2, 2>(new SmoothnessCost(1.0));
-            problem.AddResidualBlock(smoothCost1, nullptr, &v1Path_[2*i], &v1Path_[2*i + 2]);
-
-            auto* smoothCost2 = new ceres::AutoDiffCostFunction<SmoothnessCost, 2, 2, 2>(new SmoothnessCost(1.0));
-            problem.AddResidualBlock(smoothCost2, nullptr, &v2Path_[2*i], &v2Path_[2*i + 2]);
-        }
-
-        problem.SetParameterBlockConstant(&v1Path_[0]);
-        problem.SetParameterBlockConstant(&v2Path_[0]);
-        problem.SetParameterBlockConstant(&v1Path_[2*(numWaypoints_-1)]);
-        problem.SetParameterBlockConstant(&v2Path_[2*(numWaypoints_-1)]);
-
-        ceres::Solver::Options options;
-        options.linear_solver_type = ceres::DENSE_QR;
-        options.minimizer_progress_to_stdout = false;
-        options.max_num_iterations = 100;
-        
-        ceres::Solver::Summary summary;
-        ceres::Solve(options, &problem, &summary);
-        
-        if (!summary.IsSolutionUsable()) return false;
-
-        bool valid = true;
-        for (int i = 0; i < numWaypoints_; ++i)
-        {
-            JointManifoldState flatState = {v1Path_[2*i], v1Path_[2*i+1], v2Path_[2*i], v2Path_[2*i+1]};
-            if (!checker_->isManifoldStateValid(flatState))
-            {
-                std::cerr << "Collision detected on straight line at step " << i << std::endl;
-                valid = false;
-                break;
-            }
-        }
-        return valid;
-    }
-
-    const std::array<double, 16> projection = buildProjectionMatrix4D(dir);
+bool CeresPlanner::initializeWaypoints()
+{
+    const bool isEuclidean2D = (taskSpaceType_ == TaskSpaceType::Euclidean2D);
+    const char* unreachableMessage = isEuclidean2D
+        ? "Straight line passes through unreachable workspace!"
+        : "Straight line passes through unreachable task space!";
+    const TaskSpaceInterpolator interpolator;
 
     for (int i = 0; i < numWaypoints_; ++i)
     {
         double t = static_cast<double>(i) / (numWaypoints_ - 1);
-        std::vector<double> taskTarget = interpolateTaskSpaceCoordinates(taskSpaceType_, startTaskSpace_, goalTaskSpace_, t);
+        const TaskSpaceCoordinates taskTargetCoordinates =
+            interpolator.interpolate(startTaskSpaceCoordinates_, goalTaskSpaceCoordinates_, t);
+        std::vector<double> taskTarget = flattenTaskSpaceCoordinates(taskTargetCoordinates);
 
         JointManifoldState seedState = arm_->interpolateManifoldState(startState_, goalState_, t);
 
@@ -271,91 +214,129 @@ bool CeresPlanner::solve(double /*solveTimeSeconds*/)
         {
             if (!arm_->computeInverseKinematics(taskTarget, seedState, ikSolution))
             {
-                std::cerr << "Straight line passes through unreachable task space!" << std::endl;
+                std::cerr << unreachableMessage << std::endl;
                 return false;
             }
             initialState = &ikSolution;
         }
 
-        v1Path_[2 * i] = (*initialState)[0];
-        v1Path_[2 * i + 1] = (*initialState)[1];
-        v2Path_[2 * i] = (*initialState)[2];
-        v2Path_[2 * i + 1] = (*initialState)[3];
-        if (jointCount_ >= 3)
-        {
-            v3Path_[2 * i] = (*initialState)[4];
-            v3Path_[2 * i + 1] = (*initialState)[5];
-        }
+        assignWaypointFromState(i, *initialState);
+    }
+    return true;
+}
+
+bool CeresPlanner::optimizePath(const std::vector<double> &direction, double solveTimeSeconds)
+{
+    const bool isEuclidean2D = (taskSpaceType_ == TaskSpaceType::Euclidean2D);
+    if (!isEuclidean2D && jointCount_ < 3)
+    {
+        return false;
     }
 
-    ceres::Problem problem;
-    ceres::Manifold* sphereManifold = new ceres::SphereManifold<2>;
+    double p00 = 0.0;
+    double p01 = 0.0;
+    double p11 = 0.0;
+    std::array<double, 16> projection{};
+    if (isEuclidean2D)
+    {
+        p00 = 1.0 - direction[0] * direction[0];
+        p01 = -direction[0] * direction[1];
+        p11 = 1.0 - direction[1] * direction[1];
+    }
+    else
+    {
+        projection = buildProjectionMatrix4D(direction);
+    }
 
-    std::vector<double> kinParams = arm_->getKinematicParameters();
-    if (kinParams.size() < 3) return false;
-    double l1 = kinParams[0];
-    double l2 = kinParams[1];
-    double l3 = kinParams[2];
+    ceres::Problem::Options problemOptions;
+    problemOptions.manifold_ownership = ceres::DO_NOT_TAKE_OWNERSHIP;
+    ceres::Problem problem(problemOptions);
+    auto sphereManifold = std::make_unique<ceres::SphereManifold<2>>();
+
+    const KinematicParameters kinParams = arm_->getKinematicParameters();
+    const std::size_t requiredJointParams = isEuclidean2D ? 2U : 3U;
+    if (kinParams.linkLengths.size() < requiredJointParams) return false;
+    double l1 = kinParams.linkLengths[0];
+    double l2 = kinParams.linkLengths[1];
+    double l3 = isEuclidean2D ? 0.0 : kinParams.linkLengths[2];
 
     for (int i = 0; i < numWaypoints_; ++i)
     {
-        problem.AddParameterBlock(&v1Path_[2*i], 2, sphereManifold);
-        problem.AddParameterBlock(&v2Path_[2*i], 2, sphereManifold);
-        problem.AddParameterBlock(&v3Path_[2*i], 2, sphereManifold);
+        std::vector<double*> parameterBlocks;
+        parameterBlocks.reserve(jointCount_);
+        for (std::size_t joint = 0; joint < jointCount_; ++joint)
+        {
+            double* block = jointPathBlock(joint, i);
+            problem.AddParameterBlock(block, 2, sphereManifold.get());
+            parameterBlocks.push_back(block);
+        }
 
-        auto* lineCost = new ceres::AutoDiffCostFunction<StraightLineCost4D, 4, 2, 2, 2>(
-            new StraightLineCost4D(l1, l2, l3,
-                                   startTaskSpace_[0], startTaskSpace_[1], startTaskSpace_[2], startTaskSpace_[3],
-                                   projection, 20.0));
-        problem.AddResidualBlock(lineCost, nullptr, &v1Path_[2*i], &v2Path_[2*i], &v3Path_[2*i]);
+        ceres::CostFunction* lineCost = nullptr;
+        if (isEuclidean2D)
+        {
+            lineCost = new ceres::AutoDiffCostFunction<StraightLineCost2D, 2, 2, 2>(
+                new StraightLineCost2D(l1, l2, startTaskSpace_[0], startTaskSpace_[1], p00, p01, p11, options_.lineConstraintWeight));
+        }
+        else
+        {
+            lineCost = new ceres::AutoDiffCostFunction<StraightLineCost4D, 4, 2, 2, 2>(
+                new StraightLineCost4D(l1, l2, l3,
+                                       startTaskSpace_[0], startTaskSpace_[1], startTaskSpace_[2], startTaskSpace_[3],
+                                       projection, options_.lineConstraintWeight));
+        }
+        problem.AddResidualBlock(lineCost, nullptr, parameterBlocks);
     }
 
     for (int i = 0; i < numWaypoints_ - 1; ++i)
     {
-        auto* smoothCost1 = new ceres::AutoDiffCostFunction<SmoothnessCost, 2, 2, 2>(new SmoothnessCost(1.0));
-        problem.AddResidualBlock(smoothCost1, nullptr, &v1Path_[2*i], &v1Path_[2*i + 2]);
-
-        auto* smoothCost2 = new ceres::AutoDiffCostFunction<SmoothnessCost, 2, 2, 2>(new SmoothnessCost(1.0));
-        problem.AddResidualBlock(smoothCost2, nullptr, &v2Path_[2*i], &v2Path_[2*i + 2]);
-
-        auto* smoothCost3 = new ceres::AutoDiffCostFunction<SmoothnessCost, 2, 2, 2>(new SmoothnessCost(1.0));
-        problem.AddResidualBlock(smoothCost3, nullptr, &v3Path_[2*i], &v3Path_[2*i + 2]);
+        for (std::size_t joint = 0; joint < jointCount_; ++joint)
+        {
+            auto* smoothCost = new ceres::AutoDiffCostFunction<SmoothnessCost, 2, 2, 2>(new SmoothnessCost(options_.smoothnessWeight));
+            std::vector<double*> smoothBlocks = {
+                jointPathBlock(joint, i),
+                jointPathBlock(joint, i + 1)
+            };
+            problem.AddResidualBlock(smoothCost, nullptr, smoothBlocks);
+        }
     }
 
-    problem.SetParameterBlockConstant(&v1Path_[0]);
-    problem.SetParameterBlockConstant(&v2Path_[0]);
-    problem.SetParameterBlockConstant(&v3Path_[0]);
-    problem.SetParameterBlockConstant(&v1Path_[2*(numWaypoints_-1)]);
-    problem.SetParameterBlockConstant(&v2Path_[2*(numWaypoints_-1)]);
-    problem.SetParameterBlockConstant(&v3Path_[2*(numWaypoints_-1)]);
+    for (std::size_t joint = 0; joint < jointCount_; ++joint)
+    {
+        problem.SetParameterBlockConstant(jointPathBlock(joint, 0));
+        problem.SetParameterBlockConstant(jointPathBlock(joint, numWaypoints_ - 1));
+    }
 
+    return runSolver(problem, solveTimeSeconds);
+}
+
+bool CeresPlanner::runSolver(ceres::Problem &problem, double solveTimeSeconds) const
+{
     ceres::Solver::Options options;
     options.linear_solver_type = ceres::DENSE_QR;
     options.minimizer_progress_to_stdout = false;
-    options.max_num_iterations = 100;
-    
+    options.max_num_iterations = options_.maxNumIterations;
+    if (solveTimeSeconds > 0.0)
+    {
+        options.max_solver_time_in_seconds = solveTimeSeconds;
+    }
+
     ceres::Solver::Summary summary;
     ceres::Solve(options, &problem, &summary);
-    
-    if (!summary.IsSolutionUsable()) return false;
+    return summary.IsSolutionUsable();
+}
 
-    bool valid = true;
+bool CeresPlanner::validatePath() const
+{
     for (int i = 0; i < numWaypoints_; ++i)
     {
-        JointManifoldState flatState = {v1Path_[2*i], v1Path_[2*i+1], v2Path_[2*i], v2Path_[2*i+1]};
-        if (jointCount_ >= 3)
-        {
-            flatState.push_back(v3Path_[2*i]);
-            flatState.push_back(v3Path_[2*i+1]);
-        }
+        JointManifoldState flatState = buildFlatState(i);
         if (!checker_->isManifoldStateValid(flatState))
         {
             std::cerr << "Collision detected on straight line at step " << i << std::endl;
-            valid = false;
-            break;
+            return false;
         }
     }
-    return valid;
+    return true;
 }
 
 ManifoldPath CeresPlanner::getPathManifoldStates() const
@@ -364,15 +345,37 @@ ManifoldPath CeresPlanner::getPathManifoldStates() const
     path.reserve(numWaypoints_);
     for (int i = 0; i < numWaypoints_; ++i)
     {
-        JointManifoldState flatState = {v1Path_[2*i], v1Path_[2*i+1], v2Path_[2*i], v2Path_[2*i+1]};
-        if (jointCount_ >= 3)
-        {
-            flatState.push_back(v3Path_[2*i]);
-            flatState.push_back(v3Path_[2*i+1]);
-        }
+        JointManifoldState flatState = buildFlatState(i);
         path.push_back(std::move(flatState));
     }
     return path;
+}
+
+void CeresPlanner::assignWaypointFromState(int waypointIndex, const JointManifoldState &state)
+{
+    for (std::size_t joint = 0; joint < jointCount_; ++joint)
+    {
+        const std::size_t stateOffset = 2 * joint;
+        jointPaths_[joint][waypointIndex][0] = state[stateOffset];
+        jointPaths_[joint][waypointIndex][1] = state[stateOffset + 1];
+    }
+}
+
+double* CeresPlanner::jointPathBlock(std::size_t jointIndex, int waypointIndex)
+{
+    return jointPaths_[jointIndex][waypointIndex].data();
+}
+
+JointManifoldState CeresPlanner::buildFlatState(int waypointIndex) const
+{
+    JointManifoldState state;
+    state.reserve(2 * jointCount_);
+    for (std::size_t joint = 0; joint < jointCount_; ++joint)
+    {
+        state.push_back(jointPaths_[joint][waypointIndex][0]);
+        state.push_back(jointPaths_[joint][waypointIndex][1]);
+    }
+    return state;
 }
 
 double CeresPlanner::getPathLength() const

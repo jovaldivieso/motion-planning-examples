@@ -12,7 +12,7 @@ public:
 
     [[nodiscard]] std::size_t getJointCount() const override;
 
-    [[nodiscard]] std::vector<double> computeTaskSpaceCoordinates(const JointManifoldState &state) const override;
+    [[nodiscard]] TaskSpaceCoordinates computeTaskSpaceCoordinates(const JointManifoldState &state) const override;
 
     void computeForwardKinematics(const JointManifoldState &state,
                                   std::vector<fcl::Transform3d> &transforms) const override;
@@ -30,7 +30,7 @@ public:
                                                 const JointManifoldState &seedState,
                                                 JointManifoldState &solutionState) const override;
 
-    [[nodiscard]] std::vector<double> getKinematicParameters() const override;
+    [[nodiscard]] KinematicParameters getKinematicParameters() const override;
 
     [[nodiscard]] JointManifoldState interpolateManifoldState(const JointManifoldState& a, const JointManifoldState& b, double t) const override;
     [[nodiscard]] double computeManifoldDistance(const JointManifoldState& a, const JointManifoldState& b) const override;

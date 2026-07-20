@@ -10,6 +10,11 @@
 namespace motion_planning_examples
 {
 
+struct KinematicParameters
+{
+    std::vector<double> linkLengths;
+};
+
 class RobotMechanism
 {
 public:
@@ -19,7 +24,7 @@ public:
 
     // Planner-facing task-space coordinates. This may be lower-dimensional than the task space
     // for which a mechanism can provide analytic IK.
-    [[nodiscard]] virtual std::vector<double> computeTaskSpaceCoordinates(const JointManifoldState &state) const = 0;
+    [[nodiscard]] virtual TaskSpaceCoordinates computeTaskSpaceCoordinates(const JointManifoldState &state) const = 0;
 
     virtual void computeForwardKinematics(const JointManifoldState &state,
                                           std::vector<fcl::Transform3d> &transforms) const = 0;
@@ -46,7 +51,7 @@ public:
         return false;
     }
 
-    [[nodiscard]] virtual std::vector<double> getKinematicParameters() const = 0;
+    [[nodiscard]] virtual KinematicParameters getKinematicParameters() const = 0;
 
     // Native continuous interpolation mechanism on the mechanism manifold.
     [[nodiscard]] virtual JointManifoldState interpolateManifoldState(const JointManifoldState& a, 

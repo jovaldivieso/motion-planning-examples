@@ -17,11 +17,11 @@ RRRPlanarArm::RRRPlanarArm(double link1Length, double link2Length, double link3L
 
 std::size_t RRRPlanarArm::getJointCount() const { return 3; }
 
-std::vector<double> RRRPlanarArm::computeTaskSpaceCoordinates(const JointManifoldState &state) const
+TaskSpaceCoordinates RRRPlanarArm::computeTaskSpaceCoordinates(const JointManifoldState &state) const
 {
     fcl::Transform3d transform = fcl::Transform3d::Identity();
     computeEndEffectorPose(state, transform);
-    return {
+    return SE2Coordinates{
         transform.translation().x(),
         transform.translation().y(),
         transform.linear()(0, 0),
@@ -157,7 +157,10 @@ bool RRRPlanarArm::computeInverseKinematics(const std::vector<double>& targetWor
     return true;
 }
 
-std::vector<double> RRRPlanarArm::getKinematicParameters() const { return {l1_, l2_, l3_}; }
+KinematicParameters RRRPlanarArm::getKinematicParameters() const
+{
+    return KinematicParameters{{l1_, l2_, l3_}};
+}
 
 JointManifoldState RRRPlanarArm::interpolateManifoldState(const JointManifoldState& a, const JointManifoldState& b, double t) const
 {

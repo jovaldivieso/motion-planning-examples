@@ -6,6 +6,8 @@
 #include <cstddef>
 #include <stdexcept>
 #include <string_view>
+#include <type_traits>
+#include <variant>
 #include <vector>
 
 #include <fcl/fcl.h>
@@ -22,6 +24,7 @@ using SO2Coordinates = std::array<double, 2>; // [c, s]
 using SO3Coordinates = std::array<double, 3>; // rotation vector coordinates
 using SE2Coordinates = std::array<double, 4>; // [x, y, c_phi, s_phi]
 using SE3Coordinates = std::array<double, 16>; // row-major 4x4 homogeneous transform
+using TaskSpaceCoordinates = std::variant<Euclidean2DCoordinates, Euclidean3DCoordinates, SE2Coordinates, SE3Coordinates>;
 
 enum class TaskSpaceType
 {
@@ -55,22 +58,27 @@ enum class TaskSpaceType
     return "unknown";
 }
 
-[[nodiscard]] inline constexpr TaskSpaceType inferTaskSpaceType(std::size_t coordinateCount)
-{
-    switch (coordinateCount)
-    {
-    case 2: return TaskSpaceType::Euclidean2D;
-    case 3: return TaskSpaceType::Euclidean3D;
-    case 4: return TaskSpaceType::SE2;
-    case 16: return TaskSpaceType::SE3;
-    default:
-        throw std::invalid_argument("Unsupported task-space coordinate count");
-    }
-}
-
 [[nodiscard]] inline constexpr bool hasTaskSpaceOrientation(TaskSpaceType type)
 {
     return type == TaskSpaceType::SE2 || type == TaskSpaceType::SE3;
+}
+
+[[nodiscard]] inline TaskSpaceType getTaskSpaceType(const TaskSpaceCoordinates &coordinates)
+{
+    return std::visit([](const auto &value) -> TaskSpaceType {
+        using T = std::decay_t<decltype(value)>;
+        if constexpr (std::is_same_v<T, Euclidean2DCoordinates>) return TaskSpaceType::Euclidean2D;
+        if constexpr (std::is_same_v<T, Euclidean3DCoordinates>) return TaskSpaceType::Euclidean3D;
+        if constexpr (std::is_same_v<T, SE2Coordinates>) return TaskSpaceType::SE2;
+        return TaskSpaceType::SE3;
+    }, coordinates);
+}
+
+[[nodiscard]] inline std::vector<double> flattenTaskSpaceCoordinates(const TaskSpaceCoordinates &coordinates)
+{
+    return std::visit([](const auto &value) {
+        return std::vector<double>(value.begin(), value.end());
+    }, coordinates);
 }
 
 [[nodiscard]] inline constexpr SO2Coordinates createFromAngleSO2(double angle)
@@ -130,38 +138,39 @@ enum class TaskSpaceType
     return transform;
 }
 
-[[nodiscard]] inline std::vector<double> interpolateTaskSpaceCoordinates(TaskSpaceType type,
-                                                                          const std::vector<double> &a,
-                                                                          const std::vector<double> &b,
-                                                                          double t)
+class TaskSpaceInterpolator
 {
-    if (a.size() != b.size())
+public:
+    [[nodiscard]] TaskSpaceCoordinates interpolate(const TaskSpaceCoordinates &a,
+                                                   const TaskSpaceCoordinates &b,
+                                                   double t) const
     {
-        throw std::invalid_argument("Task-space coordinate dimensions must match");
-    }
+        if (a.index() != b.index())
+        {
+            throw std::invalid_argument("Task-space coordinate types must match for interpolation");
+        }
 
-    std::vector<double> out(getTaskSpaceCoordinateCount(type), 0.0);
-    if (type == TaskSpaceType::SE2)
-    {
-        if (a.size() != 4) throw std::invalid_argument("SE2 task space expects 4 coordinates");
-        out[0] = (1.0 - t) * a[0] + t * b[0];
-        out[1] = (1.0 - t) * a[1] + t * b[1];
-        const SO2Coordinates wa = interpolateSO2({a[2], a[3]}, {b[2], b[3]}, t);
-        out[2] = wa[0];
-        out[3] = wa[1];
-        return out;
-    }
+        return std::visit([t](const auto &lhs, const auto &rhs) -> TaskSpaceCoordinates {
+            using T = std::decay_t<decltype(lhs)>;
+            T out{};
 
-    if (a.size() != out.size())
-    {
-        throw std::invalid_argument("Task-space coordinate dimensions do not match the requested type");
-    }
+            if constexpr (std::is_same_v<T, SE2Coordinates>)
+            {
+                out[0] = (1.0 - t) * lhs[0] + t * rhs[0];
+                out[1] = (1.0 - t) * lhs[1] + t * rhs[1];
+                const SO2Coordinates orientation = interpolateSO2({lhs[2], lhs[3]}, {rhs[2], rhs[3]}, t);
+                out[2] = orientation[0];
+                out[3] = orientation[1];
+                return out;
+            }
 
-    for (std::size_t i = 0; i < out.size(); ++i)
-    {
-        out[i] = (1.0 - t) * a[i] + t * b[i];
+            for (std::size_t i = 0; i < out.size(); ++i)
+            {
+                out[i] = (1.0 - t) * lhs[i] + t * rhs[i];
+            }
+            return out;
+        }, a, b);
     }
-    return out;
-}
+};
 
 }  // namespace motion_planning_examples
