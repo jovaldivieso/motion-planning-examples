@@ -1,6 +1,5 @@
 #include "ompl_planner.hpp"
 
-#include <cmath>
 #include <stdexcept>
 #include <ompl/base/StateSpace.h>
 #include <ompl/geometric/SimpleSetup.h>

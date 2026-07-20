@@ -1,6 +1,5 @@
 #include "rr_planar_arm.hpp"
 
-#include <algorithm>
 #include <array>
 #include <cmath>
 
