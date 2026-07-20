@@ -27,29 +27,18 @@ void RRPlanarArm::computeForwardKinematics(const JointManifoldState &state,
 {
     if (state.size() < 4) { transforms.clear(); return; }
 
-    const double c1 = state[0];
-    const double s1 = state[1];
-    const double c12 = c1 * state[2] - s1 * state[3];
-    const double s12 = s1 * state[2] + c1 * state[3];
+    const SO2Coordinates joint1 = {state[0], state[1]};
+    const SO2Coordinates joint2 = {state[2], state[3]};
 
-    fcl::Transform3d tf1 = fcl::Transform3d::Identity();
-    tf1.linear()(0, 0) = c1;
-    tf1.linear()(0, 1) = -s1;
-    tf1.linear()(1, 0) = s1;
-    tf1.linear()(1, 1) = c1;
-    tf1.translation() << 0.5 * l1_ * c1, 0.5 * l1_ * s1, 0.0;
-
-    fcl::Transform3d tf2 = fcl::Transform3d::Identity();
-    tf2.linear()(0, 0) = c12;
-    tf2.linear()(0, 1) = -s12;
-    tf2.linear()(1, 0) = s12;
-    tf2.linear()(1, 1) = c12;
-    tf2.translation() << l1_ * c1 + 0.5 * l2_ * c12,
-                         l1_ * s1 + 0.5 * l2_ * s12, 0.0;
+    // Explicit group-chain composition: base -> link1 tip -> link2 center/tip.
+    const fcl::Transform3d T01Center = createPlanarRevoluteTransform(joint1, 0.5 * l1_);
+    const fcl::Transform3d T01Tip = createPlanarRevoluteTransform(joint1, l1_);
+    const fcl::Transform3d T12Center = createPlanarRevoluteTransform(joint2, 0.5 * l2_);
+    const fcl::Transform3d T02Center = T01Tip * T12Center;
 
     transforms.clear();
-    transforms.push_back(tf1);
-    transforms.push_back(tf2);
+    transforms.push_back(T01Center);
+    transforms.push_back(T02Center);
 }
 
 void RRPlanarArm::computeEndEffectorPose(const JointManifoldState &state,
@@ -57,18 +46,12 @@ void RRPlanarArm::computeEndEffectorPose(const JointManifoldState &state,
 {
     if (state.size() < 4) { transform = fcl::Transform3d::Identity(); return; }
 
-    const double c1 = state[0];
-    const double s1 = state[1];
-    const double c12 = c1 * state[2] - s1 * state[3];
-    const double s12 = s1 * state[2] + c1 * state[3];
+    const SO2Coordinates joint1 = {state[0], state[1]};
+    const SO2Coordinates joint2 = {state[2], state[3]};
 
-    transform = fcl::Transform3d::Identity();
-    transform.linear()(0, 0) = c12;
-    transform.linear()(0, 1) = -s12;
-    transform.linear()(1, 0) = s12;
-    transform.linear()(1, 1) = c12;
-    transform.translation() << l1_ * c1 + l2_ * c12,
-                               l1_ * s1 + l2_ * s12, 0.0;
+    const fcl::Transform3d T01Tip = createPlanarRevoluteTransform(joint1, l1_);
+    const fcl::Transform3d T12Tip = createPlanarRevoluteTransform(joint2, l2_);
+    transform = T01Tip * T12Tip;
 }
 
 std::vector<std::shared_ptr<fcl::CollisionGeometryd>> RRPlanarArm::getCollisionGeometries() const

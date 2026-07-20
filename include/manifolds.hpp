@@ -8,6 +8,8 @@
 #include <string_view>
 #include <vector>
 
+#include <fcl/fcl.h>
+
 namespace motion_planning_examples
 {
 
@@ -115,6 +117,17 @@ enum class TaskSpaceType
 {
     const double dot = std::clamp(a[0] * b[0] + a[1] * b[1], -1.0, 1.0);
     return std::acos(dot);
+}
+
+[[nodiscard]] inline fcl::Transform3d createPlanarRevoluteTransform(const SO2Coordinates &rotation, double xLocal)
+{
+    fcl::Transform3d transform = fcl::Transform3d::Identity();
+    transform.linear()(0, 0) = rotation[0];
+    transform.linear()(0, 1) = -rotation[1];
+    transform.linear()(1, 0) = rotation[1];
+    transform.linear()(1, 1) = rotation[0];
+    transform.translation() << xLocal * rotation[0], xLocal * rotation[1], 0.0;
+    return transform;
 }
 
 [[nodiscard]] inline std::vector<double> interpolateTaskSpaceCoordinates(TaskSpaceType type,

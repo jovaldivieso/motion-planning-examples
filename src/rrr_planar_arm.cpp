@@ -34,45 +34,25 @@ void RRRPlanarArm::computeForwardKinematics(const JointManifoldState &state,
 {
     if (state.size() < 6) { transforms.clear(); return; }
 
-    const double c1 = state[0];
-    const double s1 = state[1];
-    const double c2 = state[2];
-    const double s2 = state[3];
-    const double c3 = state[4];
-    const double s3 = state[5];
+    const SO2Coordinates joint1 = {state[0], state[1]};
+    const SO2Coordinates joint2 = {state[2], state[3]};
+    const SO2Coordinates joint3 = {state[4], state[5]};
 
-    const double c12 = c1 * c2 - s1 * s2;
-    const double s12 = s1 * c2 + c1 * s2;
-    const double c123 = c12 * c3 - s12 * s3;
-    const double s123 = s12 * c3 + c12 * s3;
+    // Explicit group-chain composition: T03 = T01 * T12 * T23.
+    const fcl::Transform3d T01Center = createPlanarRevoluteTransform(joint1, 0.5 * l1_);
+    const fcl::Transform3d T01Tip = createPlanarRevoluteTransform(joint1, l1_);
+    const fcl::Transform3d T12Center = createPlanarRevoluteTransform(joint2, 0.5 * l2_);
+    const fcl::Transform3d T12Tip = createPlanarRevoluteTransform(joint2, l2_);
+    const fcl::Transform3d T23Center = createPlanarRevoluteTransform(joint3, 0.5 * l3_);
 
-    fcl::Transform3d tf1 = fcl::Transform3d::Identity();
-    tf1.linear()(0, 0) = c1;
-    tf1.linear()(0, 1) = -s1;
-    tf1.linear()(1, 0) = s1;
-    tf1.linear()(1, 1) = c1;
-    tf1.translation() << 0.5 * l1_ * c1, 0.5 * l1_ * s1, 0.0;
-
-    fcl::Transform3d tf2 = fcl::Transform3d::Identity();
-    tf2.linear()(0, 0) = c12;
-    tf2.linear()(0, 1) = -s12;
-    tf2.linear()(1, 0) = s12;
-    tf2.linear()(1, 1) = c12;
-    tf2.translation() << l1_ * c1 + 0.5 * l2_ * c12,
-                         l1_ * s1 + 0.5 * l2_ * s12, 0.0;
-
-    fcl::Transform3d tf3 = fcl::Transform3d::Identity();
-    tf3.linear()(0, 0) = c123;
-    tf3.linear()(0, 1) = -s123;
-    tf3.linear()(1, 0) = s123;
-    tf3.linear()(1, 1) = c123;
-    tf3.translation() << l1_ * c1 + l2_ * c12 + 0.5 * l3_ * c123,
-                         l1_ * s1 + l2_ * s12 + 0.5 * l3_ * s123, 0.0;
+    const fcl::Transform3d T02Center = T01Tip * T12Center;
+    const fcl::Transform3d T02Tip = T01Tip * T12Tip;
+    const fcl::Transform3d T03Center = T02Tip * T23Center;
 
     transforms.clear();
-    transforms.push_back(tf1);
-    transforms.push_back(tf2);
-    transforms.push_back(tf3);
+    transforms.push_back(T01Center);
+    transforms.push_back(T02Center);
+    transforms.push_back(T03Center);
 }
 
 void RRRPlanarArm::computeEndEffectorPose(const JointManifoldState &state,
@@ -80,25 +60,14 @@ void RRRPlanarArm::computeEndEffectorPose(const JointManifoldState &state,
 {
     if (state.size() < 6) { transform = fcl::Transform3d::Identity(); return; }
 
-    const double c1 = state[0];
-    const double s1 = state[1];
-    const double c2 = state[2];
-    const double s2 = state[3];
-    const double c3 = state[4];
-    const double s3 = state[5];
+    const SO2Coordinates joint1 = {state[0], state[1]};
+    const SO2Coordinates joint2 = {state[2], state[3]};
+    const SO2Coordinates joint3 = {state[4], state[5]};
 
-    const double c12 = c1 * c2 - s1 * s2;
-    const double s12 = s1 * c2 + c1 * s2;
-    const double c123 = c12 * c3 - s12 * s3;
-    const double s123 = s12 * c3 + c12 * s3;
-
-    transform = fcl::Transform3d::Identity();
-    transform.linear()(0, 0) = c123;
-    transform.linear()(0, 1) = -s123;
-    transform.linear()(1, 0) = s123;
-    transform.linear()(1, 1) = c123;
-    transform.translation() << l1_ * c1 + l2_ * c12 + l3_ * c123,
-                               l1_ * s1 + l2_ * s12 + l3_ * s123, 0.0;
+    const fcl::Transform3d T01Tip = createPlanarRevoluteTransform(joint1, l1_);
+    const fcl::Transform3d T12Tip = createPlanarRevoluteTransform(joint2, l2_);
+    const fcl::Transform3d T23Tip = createPlanarRevoluteTransform(joint3, l3_);
+    transform = T01Tip * T12Tip * T23Tip;
 }
 
 std::vector<std::shared_ptr<fcl::CollisionGeometryd>> RRRPlanarArm::getCollisionGeometries() const
