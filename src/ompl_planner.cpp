@@ -34,8 +34,9 @@ JointManifoldState OMPLPlanner::manifoldStateFromOMPL(const ob::State *state) co
     for (unsigned int i = 0; i < subspaceCount; ++i)
     {
         const double theta = compound->as<ob::SO2StateSpace::StateType>(i)->value;
-        manifold.push_back(std::cos(theta));
-        manifold.push_back(std::sin(theta));
+        const auto joint = createFromAngleSO2(theta);
+        manifold.push_back(joint[0]);
+        manifold.push_back(joint[1]);
     }
     return manifold;
 }
@@ -53,7 +54,7 @@ void OMPLPlanner::setOMPLStateFromManifold(const JointManifoldState &state, ob::
     {
         const double c = state[2 * i];
         const double s = state[2 * i + 1];
-        compound->as<ob::SO2StateSpace::StateType>(i)->value = std::atan2(s, c);
+        compound->as<ob::SO2StateSpace::StateType>(i)->value = convertToAngleSO2({c, s});
     }
 }
 

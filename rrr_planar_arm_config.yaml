@@ -1,6 +1,9 @@
 # Select planner: 'ceres' for straight-line task space, 'ompl' for RRT* C-Space
 planner: ceres
 
+# Select robot: 'rr_planar_arm' for 2R planar arm, 'rrr_planar_arm' for 3R planar arm
+robot: rrr_planar_arm
+
 # RRT* planner settings
 solve_time: 3.0
 range: 0.30
@@ -19,9 +22,10 @@ obstacle_max_size: 0.22
 workspace_min: -1.6
 workspace_max: 1.6
 
-# 2-link planar arm geometry
+# 3-link planar arm geometry
 link1_length: 1.0
 link2_length: 0.9
+link3_length: 0.75
 link_thickness: 0.08
 object_height: 0.20
 
@@ -29,9 +33,9 @@ object_height: 0.20
 torus_major_radius: 2.0
 torus_minor_radius: 0.7
 
-# Start and goal in joint-space (theta1, theta2)
-start: [1.00, 1.00]
-goal: [2.00, 2.00]
+# Start and goal in joint-space (theta1, theta2, theta3)
+start: [1.00, 1.00, -0.50]
+goal: [2.00, 2.00, 0.75]
 
 # Output file for the final figure (use .pdf or .png)
 output_pdf: torus_path.png

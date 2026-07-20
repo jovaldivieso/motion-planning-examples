@@ -1,4 +1,4 @@
-#include "two_dof_planar_arm.hpp"
+#include "rr_planar_arm.hpp"
 
 #include <algorithm>
 #include <array>
@@ -7,17 +7,24 @@
 namespace motion_planning_examples
 {
 
-TwoDOFPlanarArm::TwoDOFPlanarArm(double link1Length, double link2Length, double linkThickness, double objectHeight)
+RRPlanarArm::RRPlanarArm(double link1Length, double link2Length, double linkThickness, double objectHeight)
     : l1_(link1Length), l2_(link2Length)
 {
     link1Geometry_ = std::make_shared<fcl::Boxd>(l1_, linkThickness, objectHeight);
     link2Geometry_ = std::make_shared<fcl::Boxd>(l2_, linkThickness, objectHeight);
 }
 
-std::size_t TwoDOFPlanarArm::getJointCount() const { return 2; }
+std::size_t RRPlanarArm::getJointCount() const { return 2; }
 
-void TwoDOFPlanarArm::computeForwardKinematics(const JointManifoldState &state,
-                                               std::vector<fcl::Transform3d> &transforms) const
+std::vector<double> RRPlanarArm::computeTaskSpaceCoordinates(const JointManifoldState &state) const
+{
+    fcl::Transform3d transform = fcl::Transform3d::Identity();
+    computeEndEffectorPose(state, transform);
+    return {transform.translation().x(), transform.translation().y()};
+}
+
+void RRPlanarArm::computeForwardKinematics(const JointManifoldState &state,
+                                           std::vector<fcl::Transform3d> &transforms) const
 {
     if (state.size() < 4) { transforms.clear(); return; }
 
@@ -46,7 +53,7 @@ void TwoDOFPlanarArm::computeForwardKinematics(const JointManifoldState &state,
     transforms.push_back(tf2);
 }
 
-void TwoDOFPlanarArm::computeEndEffectorPose(const JointManifoldState &state,
+void RRPlanarArm::computeEndEffectorPose(const JointManifoldState &state,
                                          fcl::Transform3d &transform) const
 {
     if (state.size() < 4) { transform = fcl::Transform3d::Identity(); return; }
@@ -65,14 +72,14 @@ void TwoDOFPlanarArm::computeEndEffectorPose(const JointManifoldState &state,
                                l1_ * s1 + l2_ * s12, 0.0;
 }
 
-std::vector<std::shared_ptr<fcl::CollisionGeometryd>> TwoDOFPlanarArm::getCollisionGeometries() const
+std::vector<std::shared_ptr<fcl::CollisionGeometryd>> RRPlanarArm::getCollisionGeometries() const
 {
     return {link1Geometry_, link2Geometry_};
 }
 
-bool TwoDOFPlanarArm::computeInverseKinematics(const std::vector<double>& targetWorkspace,
-                                               const JointManifoldState &seedState,
-                                               JointManifoldState &solutionState) const
+bool RRPlanarArm::computeInverseKinematics(const std::vector<double>& targetWorkspace,
+                                           const JointManifoldState &seedState,
+                                           JointManifoldState &solutionState) const
 {
     if (targetWorkspace.size() < 2 || seedState.size() < 4) return false;
     double px = targetWorkspace[0];
@@ -91,7 +98,7 @@ bool TwoDOFPlanarArm::computeInverseKinematics(const std::vector<double>& target
     std::array<double, 2> joint2_a = {c2, s2_mag};
     std::array<double, 2> joint2_b = {c2, -s2_mag};
 
-    // 2. Solve for Joint 1 as a 2x2 linear system (No trigonometry)
+    // 2. Solve for Joint 1 as a 2x2 linear system
     auto solveJoint1 = [&](const std::array<double, 2>& j2) -> std::array<double, 2> {
         if (p_sq < kEps)
         {
@@ -125,36 +132,19 @@ bool TwoDOFPlanarArm::computeInverseKinematics(const std::vector<double>& target
     return true;
 }
 
-std::vector<double> TwoDOFPlanarArm::getKinematicParameters() const { return {l1_, l2_}; }
+std::vector<double> RRPlanarArm::getKinematicParameters() const { return {l1_, l2_}; }
 
-JointManifoldState TwoDOFPlanarArm::interpolateManifoldState(const JointManifoldState& a, const JointManifoldState& b, double t) const
+JointManifoldState RRPlanarArm::interpolateManifoldState(const JointManifoldState& a, const JointManifoldState& b, double t) const
 {
-    auto slerp = [t](double a0, double a1, double b0, double b1) -> std::array<double, 2> {
-        double dot = std::clamp(a0 * b0 + a1 * b1, -1.0, 1.0);
-        double omega = std::acos(dot);
-        if (omega < 1e-10) return {a0, a1};
-        
-        double sinOmega = std::sin(omega);
-        double wa = std::sin((1.0 - t) * omega) / sinOmega;
-        double wb = std::sin(t * omega) / sinOmega;
-        
-        double out0 = wa * a0 + wb * b0;
-        double out1 = wa * a1 + wb * b1;
-        double n = std::sqrt(out0 * out0 + out1 * out1);
-        return (n < 1e-12) ? std::array<double, 2>{a0, a1} : std::array<double, 2>{out0 / n, out1 / n};
-    };
-
-    auto j1 = slerp(a[0], a[1], b[0], b[1]);
-    auto j2 = slerp(a[2], a[3], b[2], b[3]);
+    const SO2Coordinates j1 = interpolateSO2({a[0], a[1]}, {b[0], b[1]}, t);
+    const SO2Coordinates j2 = interpolateSO2({a[2], a[3]}, {b[2], b[3]}, t);
     return {j1[0], j1[1], j2[0], j2[1]};
 }
 
-double TwoDOFPlanarArm::computeManifoldDistance(const JointManifoldState& a, const JointManifoldState& b) const
+double RRPlanarArm::computeManifoldDistance(const JointManifoldState& a, const JointManifoldState& b) const
 {
-    const double dot1 = std::clamp(a[0] * b[0] + a[1] * b[1], -1.0, 1.0);
-    const double dot2 = std::clamp(a[2] * b[2] + a[3] * b[3], -1.0, 1.0);
-    const double d1 = std::acos(dot1);
-    const double d2 = std::acos(dot2);
+    const double d1 = geodesicDistanceSO2({a[0], a[1]}, {b[0], b[1]});
+    const double d2 = geodesicDistanceSO2({a[2], a[3]}, {b[2], b[3]});
     return std::sqrt(d1 * d1 + d2 * d2);
 }
 

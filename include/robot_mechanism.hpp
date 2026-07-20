@@ -1,6 +1,6 @@
 #pragma once
 
-#include "manifold_types.hpp"
+#include "manifolds.hpp"
 
 #include <memory>
 #include <vector>
@@ -17,6 +17,10 @@ public:
 
     [[nodiscard]] virtual std::size_t getJointCount() const = 0;
 
+    // Planner-facing task-space coordinates. This may be lower-dimensional than the task space
+    // for which a mechanism can provide analytic IK.
+    [[nodiscard]] virtual std::vector<double> computeTaskSpaceCoordinates(const JointManifoldState &state) const = 0;
+
     virtual void computeForwardKinematics(const JointManifoldState &state,
                                           std::vector<fcl::Transform3d> &transforms) const = 0;
 
@@ -24,9 +28,23 @@ public:
 
     [[nodiscard]] virtual std::vector<std::shared_ptr<fcl::CollisionGeometryd>> getCollisionGeometries() const = 0;
 
-    [[nodiscard]] virtual bool computeInverseKinematics(const std::vector<double>& targetWorkspace, 
+    // Whether the mechanism provides analytic IK for some task space.
+    // Planners may still use lower-dimensional task spaces where the mechanism is redundant.
+    [[nodiscard]] virtual bool supportsInverseKinematics(TaskSpaceType taskSpaceType) const
+    {
+        (void)taskSpaceType;
+        return false;
+    }
+
+    [[nodiscard]] virtual bool computeInverseKinematics(const std::vector<double>& targetWorkspace,
                                                         const JointManifoldState &seedState,
-                                                        JointManifoldState &solutionState) const = 0;
+                                                        JointManifoldState &solutionState) const
+    {
+        (void)targetWorkspace;
+        (void)seedState;
+        (void)solutionState;
+        return false;
+    }
 
     [[nodiscard]] virtual std::vector<double> getKinematicParameters() const = 0;
 

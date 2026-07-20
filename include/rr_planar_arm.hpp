@@ -5,12 +5,14 @@
 namespace motion_planning_examples
 {
 
-class TwoDOFPlanarArm : public RobotMechanism
+class RRPlanarArm : public RobotMechanism
 {
 public:
-    TwoDOFPlanarArm(double link1Length, double link2Length, double linkThickness, double objectHeight);
+    RRPlanarArm(double link1Length, double link2Length, double linkThickness, double objectHeight);
 
     [[nodiscard]] std::size_t getJointCount() const override;
+
+    [[nodiscard]] std::vector<double> computeTaskSpaceCoordinates(const JointManifoldState &state) const override;
 
     void computeForwardKinematics(const JointManifoldState &state,
                                   std::vector<fcl::Transform3d> &transforms) const override;
@@ -18,6 +20,11 @@ public:
     void computeEndEffectorPose(const JointManifoldState &state, fcl::Transform3d &transform) const override;
 
     [[nodiscard]] std::vector<std::shared_ptr<fcl::CollisionGeometryd>> getCollisionGeometries() const override;
+
+    [[nodiscard]] bool supportsInverseKinematics(TaskSpaceType taskSpaceType) const override
+    {
+        return taskSpaceType == TaskSpaceType::Euclidean2D;
+    }
 
     [[nodiscard]] bool computeInverseKinematics(const std::vector<double>& targetWorkspace,
                                                 const JointManifoldState &seedState,

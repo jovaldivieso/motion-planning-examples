@@ -1,6 +1,6 @@
 #pragma once
 
-#include "manifold_types.hpp"
+#include "manifolds.hpp"
 
 namespace motion_planning_examples
 {

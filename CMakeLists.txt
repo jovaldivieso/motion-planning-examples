@@ -20,7 +20,8 @@ find_package(Ceres REQUIRED)
 add_executable(
     plan
     src/main.cpp
-    src/two_dof_planar_arm.cpp
+    src/rr_planar_arm.cpp
+    src/rrr_planar_arm.cpp
     src/ompl_planner.cpp
     src/ceres_planner.cpp
     src/fcl_collision_checker.cpp
@@ -41,4 +42,5 @@ target_link_libraries(plan PRIVATE
 )
 
 # Copy runtime assets to the build directory
-configure_file(config.yaml ${CMAKE_CURRENT_BINARY_DIR}/config.yaml COPYONLY)
+configure_file(rr_planar_arm_config.yaml ${CMAKE_CURRENT_BINARY_DIR}/rr_planar_arm_config.yaml COPYONLY)
+configure_file(rrr_planar_arm_config.yaml ${CMAKE_CURRENT_BINARY_DIR}/rrr_planar_arm_config.yaml COPYONLY)

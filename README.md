@@ -1,253 +1,117 @@
 # C++ Motion Planning Examples
 
-Repository notes to keep theory and implementation aligned, and details about the math in the implementation.
+This repository keeps the implementation and the math aligned around manifold-native robot states.
 
 ## Quickstart
 
 ```bash
 cmake -S . -B build
 cmake --build build -j
-./build/plan config.yaml
-python plot_c_space.py --config config.yaml
-python plot_task_space.py --config config.yaml
+./build/plan rr_planar_arm_config.yaml
+python plot_c_space.py --config rr_planar_arm_config.yaml
+python plot_task_space.py --config rr_planar_arm_config.yaml
 ```
 
-Planner selection is in `config.yaml`:
+The runtime config chooses the planner and robot:
 
 ```yaml
 planner: ompl   # or ceres
+robot: rr_planar_arm  # or rrr_planar_arm
 ```
+
+## Core Conventions
+
+The backend does not use raw joint angles as its internal state. Revolute joints are represented as unit-circle coordinates and task spaces use explicit coordinate types.
+
+- Joint state for a revolute joint: `SO2Coordinates = [c, s]`
+- Current task-space coordinate types: `Euclidean2DCoordinates`, `Euclidean3DCoordinates`, `SE2Coordinates`, `SE3Coordinates`
+- Current function naming convention: verbs first, then the manifold suffix, for example `createFromAngleSO2`, `convertToAngleSO2`, `interpolateSO2`, and `geodesicDistanceSO2`
+- `taskSpaceTypeName` returns capitalized task-space labels such as `SE2` and `SE3`
+
+Scalar angles are only used at boundaries where they are unavoidable, such as config parsing, CSV export, and OMPL's internal `SO2` state assignment.
 
 ## Robot Mechanisms
 
-The base abstraction is `RobotMechanism`, intended for multiple mechanisms (not only the current 2-link planar arm example).
+The base abstraction is `RobotMechanism`, which exposes manifold-native joint states, task-space coordinates, and optional task-space-specific inverse kinematics.
 
-### Mechanism Specification
+### Current Mechanisms
 
-Current implemented mechanism instance is a 2-link planar revolute arm:
+The repository currently implements two planar robots:
 
-- Joint coordinates: $q = (\theta_1, \theta_2) \in \mathcal{Q}$
-- Configuration manifold: $\mathcal{Q} = S^1 \times S^1 = T^2$
-- Link lengths: $l_1, l_2$
-- Collision geometry per link: 3D boxes in FCL (length = link length, thickness from config, and finite height)
+- `RRPlanarArm`: 2-DOF revolute arm with Euclidean 2D task space
+- `RRRPlanarArm`: 3-DOF revolute arm with `SE2` task space represented as `[x, y, c_phi, s_phi]`
 
-In code, each revolute joint is represented directly as a point on $S^1$:
+Both mechanisms store each joint as `SO2Coordinates` and interpolate on the circle using `interpolateSO2`.
 
-$$
-v_i = (c_i,s_i) = (\cos\theta_i,\sin\theta_i),\quad c_i^2+s_i^2=1.
-$$
+### State Representation
 
-Joint composition for this 2R arm is group multiplication on $SO(2)$ encoded in $(c,s)$ pairs:
+Joint configuration is stored as a flat sequence of circle coordinates:
 
 $$
-(c_{12},s_{12}) = (c_1,s_1)\circ(c_2,s_2)
-= (c_1c_2 - s_1s_2,\ s_1c_2 + c_1s_2).
+q = [c_1, s_1, c_2, s_2, \dots]
 $$
 
-### Forward Kinematics with Matrix Lie Groups
+This avoids angle wrapping in the planner, collision checker, and IK selection logic.
 
-For end-effector position in the plane:
+## Kinematics
+
+### RR Planar Arm
+
+For the 2-link arm, the end-effector position is
 
 $$
 x = l_1\cos\theta_1 + l_2\cos(\theta_1 + \theta_2), \qquad
 y = l_1\sin\theta_1 + l_2\sin(\theta_1 + \theta_2).
 $$
 
-For collision, each link transform is evaluated at the center of its box geometry:
+Inverse kinematics uses the standard two-branch planar solution, but the backend works directly in `SO2Coordinates` rather than reconstructing intermediate scalar angles.
 
-- Link 1 center: $\left(\frac{l_1}{2}\cos\theta_1,\ \frac{l_1}{2}\sin\theta_1\right)$
-- Link 2 center:
+### RRR Planar Arm
 
-$$
-\left(l_1\cos\theta_1 + \frac{l_2}{2}\cos(\theta_1+\theta_2),\
-l_1\sin\theta_1 + \frac{l_2}{2}\sin(\theta_1+\theta_2)\right)
-$$
+The 3-link arm uses a planar `SE2` task space with coordinates `[x, y, c_phi, s_phi]`.
 
-Rotations are embedded directly from manifold coordinates into $SO(2)\subset SE(3)$ (no angle reconstruction):
+The IK implementation reduces the problem to the wrist point, solves the first two joints from the wrist location, and then composes the final orientation in `SO2Coordinates`.
 
-$$
-R(c,s)=
-\begin{bmatrix}
-c & -s & 0\\
-s & -c & 0\\
-0 & 0 & 1
-\end{bmatrix},
-$$
+### Boundary Conversions
 
-with end-effector orientation using $(c_{12},s_{12})$.
+The current code keeps angle conversion isolated at the edges:
 
-We can write the planar chain in homogeneous form with $SE(2)$ transforms:
+- `createFromAngleSO2(angle)` converts a scalar angle to `[cos(angle), sin(angle)]`
+- `convertToAngleSO2([c, s])` converts back with `atan2`
 
-$$
-{}^{0}T_{1}(\theta_1) =
-\begin{bmatrix}
-\cos\theta_1 & -\sin\theta_1 & l_1\cos\theta_1 \\
-\sin\theta_1 & \cos\theta_1 & l_1\sin\theta_1 \\
-0 & 0 & 1
-\end{bmatrix},
-\qquad
-{}^{1}T_{2}(\theta_2) =
-\begin{bmatrix}
-\cos\theta_2 & -\sin\theta_2 & l_2\cos\theta_2 \\
-\sin\theta_2 & \cos\theta_2 & l_2\sin\theta_2 \\
-0 & 0 & 1
-\end{bmatrix}.
-$$
+These helpers are used for OMPL integration and CSV export, not for the main backend math.
 
-Then:
-
-$$
-{}^{0}T_{2}(\theta_1,\theta_2) = {}^{0}T_{1}(\theta_1)\,{}^{1}T_{2}(\theta_2).
-$$
-
-The implementation uses 3D rigid transforms (`fcl::Transform3d`) with planar motion embedded in $SE(3)$ (z-translation fixed to 0, rotation only around z).
-
-### Inverse Kinematics with Matrix Lie Groups
-
-Given target point $(p_x,p_y)$, the code solves:
-
-$$
-c_2 = \frac{p_x^2 + p_y^2 - l_1^2 - l_2^2}{2 l_1 l_2}.
-$$
-
-If $c_2 \notin [-1,1]$, target is unreachable.
-
-Otherwise two elbow branches are constructed on $S^1$ for joint 2 directly:
-
-$$
-(c_2,s_2)^{(+)} = (c_2, +\sqrt{1-c_2^2}), \qquad
-(c_2,s_2)^{(-)} = (c_2, -\sqrt{1-c_2^2}).
-$$
-
-For each branch, joint 1 is solved by a linear $2\times 2$ system in $(c_1,s_1)$ (no trigonometric inverse or angle wrapping in backend IK):
-
-$$ \begin{bmatrix} p_x \\ p_y \end{bmatrix} =
-\begin{bmatrix}
-k_1 & -k_2 \\
-k_2 & -k_1
-\end{bmatrix}
-\begin{bmatrix} c_1 \\ s_1 \end{bmatrix},
-\qquad
-k_1=l_1+l_2 c_2,\; k_2=l_2 s_2,
-$$
-
-$$
-c_1 = \frac{k_1 p_x + k_2 p_y}{p_x^2+p_y^2},
-\qquad
-s_1 = \frac{-k_2 p_x + k_1 p_y}{p_x^2+p_y^2}.
-$$
-
-At the origin singularity ($p_x^2+p_y^2\approx 0$), $\theta_1$ is underdetermined for the folded-elbow case; implementation uses the seed state's joint-1 direction to keep continuity.
-
-The final branch is chosen by manifold proximity to the manifold seed state.
-
-Important implementation details:
-
-- IK output is manifold-native: each joint is returned as a unit vector $[\cos\theta, \sin\theta] \in S^1$.
-- Backend IK/FK/collision/planners do not apply scalar angle wrapping.
-- Scalar angles are only used at explicit boundaries where external APIs require them (OMPL `SO2` internal state assignment in `OMPLPlanner`, and CSV export for plotting).
-
-### Robot State Representation
-
-Backend state representation uses manifold coordinates directly:
-
-- Per-joint state: unit vector $v = [\cos\theta,\sin\theta] \in S^1$ for revolut joints.
-- Robot joint configuration: Cartesian product of per-joint manifold factors.
-- Path representation in planners: sequence of manifold states.
-
-No explicit angle wrapping is used in backend trajectory optimization or IK solution selection thanks to this global representation.
-
-## Global Planners
+## Planners
 
 ### OMPL RRT*
 
-As a global planner example we use OMPL RRT* over manifold configuration spaces (for the current mechanism: $T^2 = S^1\times S^1$).
+The OMPL example builds a compound state space with one `SO2` subspace per joint.
 
-- State space: `CompoundStateSpace(SO2, SO2)` for current 2-joint example
-- Sampling: manifold-aware via OMPL's `SO2` spaces
-- Validity: delegated to FCL collision checker callback
-- Post processing: OMPL `simplifySolution(1.5)` then interpolation
+- Sampling and interpolation remain manifold-aware through OMPL's `SO2` spaces
+- Validity is delegated to the FCL collision checker callback
+- Solution paths are simplified and then interpolated
 
-Path-length objective is OMPL's geometric path length under the underlying state-space metric. On this manifold, shortest paths are geodesics of that metric in obstacle-free regions; with obstacles, RRT* asymptotically approaches the optimal feasible path as samples increase.
+### Ceres Straight-Line Planner
 
-## Local Planners
+The Ceres example enforces a straight-line end-effector path in task space.
 
-### Ceres Straight-Line End-Effector Planner
+Start and goal task-space positions are computed by FK, then the solver minimizes orthogonal distance to the line segment while staying on the joint manifold.
 
-As a local planner example we use an optimization based motion planner that enforces a straight line in task space between start and goal end-effector points.
-
-#### 1) Line Parameterization in Task Space
-
-Start and goal end-effector positions are computed by FK:
-
-$$
-p_s = (x_s,y_s),\quad p_g = (x_g,y_g),\quad d = \frac{p_g-p_s}{\lVert p_g-p_s \rVert}.
-$$
-
-#### 2) Projection Cost (Distance-to-Line Residual)
-
-The code builds a projection matrix:
-
-$$
-P = I - dd^T =
-\begin{bmatrix}
-1-d_x^2 & -d_x d_y \\
--d_x d_y & 1-d_y^2
-\end{bmatrix}.
-$$
-
-For each waypoint end-effector point $p_i$, residual is:
-
-$$
-r_i = w\,P\,(p_i - p_s),
-$$
-
-with $w=20$ in current implementation. Minimizing this penalizes only orthogonal deviation from the line, not progress along the line.
-
-#### 3) Manifold Optimization in Ceres
-
-Instead of optimizing raw angles directly, each joint is represented as a unit vector:
-
-$$
-v = [\cos\theta,\ \sin\theta] \in S^1.
-$$
-
-For waypoint $i$, the solver variables are $(v_{1,i}, v_{2,i})$ for joints 1 and 2. Ceres applies `SphereManifold<2>` to each 2D parameter block, so updates stay on the unit circle manifold.
-
-This avoids angle-wrapping artifacts during optimization and keeps a smooth manifold parameterization.
-
-#### 4) Smoothness Term
-
-For neighboring waypoints, code adds:
-
-$$
-r^{\text{smooth}}_{i} = \lambda (v_{i+1} - v_i), \quad \lambda = 1.0,
-$$
-
-for both joints. Start and goal waypoints are fixed as constants.
-
-#### 5) Collision Handling (Current Behavior)
-
-Collision validation in the backend is performed directly from manifold states through manifold-native FK. If any state collides, solve is rejected. There is no obstacle repulsive term in the Ceres objective yet.
+The planner asks `RobotMechanism` whether inverse kinematics is available for the requested `TaskSpaceType`, and only seeds from IK when that capability exists.
 
 ## Collision Checker
 
-### FCL Setup
+The collision checker uses FCL with static square obstacles.
 
-Current collision setup checks robot links vs static square obstacles:
+1. Obstacles are modeled as FCL boxes with pose `(c_x, c_y, 0)`.
+2. Robot FK returns world transforms for each link collision box.
+3. Each link-obstacle pair is tested with `collide`.
+4. A state is valid only if no pair collides.
 
-1. Obstacles are modeled as FCL boxes with pose $(c_x,c_y,0)$ and side length from generated map.
-2. For a queried state, robot FK returns world transforms for each link collision box.
-3. For each link-obstacle pair, FCL `collide` is called with `num_max_contacts = 1`.
-4. State is valid iff no pair collides.
+The current implementation does not include self-collision between links.
 
-Notes:
+## TODOs
 
-- This currently does not include self-collision between links.
-- Collision map CSV is generated by sampling a grid in $(\theta_1,\theta_2)$.
-
-## TODO's
-
-- [ ] Self-collisions with FCL: add link-link checks in addition to link-obstacle checks.
-- [ ] Repulsive obstacle costs in Ceres: add soft obstacle terms so local optimization can bend around obstacles.
-- [ ] 3-DOF mechanism and redundancy resolution: add null-space objectives (e.g., manipulability, joint motion penalties).
+- [ ] Add link-link self-collision checks.
+- [ ] Add soft obstacle costs to the Ceres planner.
+- [ ] Add a higher-DOF mechanism and redundancy objectives.

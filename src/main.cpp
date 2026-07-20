@@ -10,9 +10,10 @@
 #include <unordered_map>
 #include <vector>
 
-#include "manifold_types.hpp"
+#include "manifolds.hpp"
 #include "robot_mechanism.hpp"
-#include "two_dof_planar_arm.hpp"
+#include "rr_planar_arm.hpp"
+#include "rrr_planar_arm.hpp"
 #include "planner.hpp"
 #include "ompl_planner.hpp"
 #include "ceres_planner.hpp"
@@ -21,19 +22,23 @@
 namespace fs = std::filesystem;
 using motion_planning_examples::JointManifoldState;
 using motion_planning_examples::RobotMechanism;
-using motion_planning_examples::TwoDOFPlanarArm;
+using motion_planning_examples::RRPlanarArm;
+using motion_planning_examples::RRRPlanarArm;
 using motion_planning_examples::FCLCollisionChecker;
 using motion_planning_examples::Planner;
 using motion_planning_examples::OMPLPlanner;
 using motion_planning_examples::CeresPlanner;
 using motion_planning_examples::RRTStarSettings;
 using motion_planning_examples::SquareObstacle;
+using motion_planning_examples::convertToAngleSO2;
+using motion_planning_examples::createFromAngleSO2;
 
 namespace
 {
 struct Config
 {
     std::string plannerType{"ompl"};
+    std::string robotType{"rr_planar_arm"};
 
     double solveTime{3.0};
     double range{0.30};
@@ -52,13 +57,12 @@ struct Config
 
     double link1Length{1.0};
     double link2Length{0.9};
+    double link3Length{0.75};
     double linkThickness{0.08};
     double objectHeight{0.20};
 
-    double startTheta1{0.20};
-    double startTheta2{-0.60};
-    double goalTheta1{2.40};
-    double goalTheta2{1.00};
+    std::vector<double> startAngles{0.20, -0.60};
+    std::vector<double> goalAngles{2.40, 1.00};
 };
 
 std::string trim(const std::string &s)
@@ -69,21 +73,33 @@ std::string trim(const std::string &s)
     return s.substr(begin, end - begin + 1);
 }
 
-std::optional<std::pair<double, double>> parseAnglePair(const std::string &value)
+std::optional<std::vector<double>> parseAngleList(const std::string &value)
 {
     std::string s = trim(value);
     if (s.size() < 5 || s.front() != '[' || s.back() != ']') return std::nullopt;
 
     s = s.substr(1, s.size() - 2);
-    const auto comma = s.find(',');
-    if (comma == std::string::npos) return std::nullopt;
-
-    try
+    std::vector<double> values;
+    std::size_t begin = 0;
+    while (begin < s.size())
     {
-        return std::make_pair(std::stod(trim(s.substr(0, comma))),
-                              std::stod(trim(s.substr(comma + 1))));
+        const auto comma = s.find(',', begin);
+        const std::string token = trim(s.substr(begin, comma == std::string::npos ? std::string::npos : comma - begin));
+        if (token.empty()) return std::nullopt;
+
+        try
+        {
+            values.push_back(std::stod(token));
+        }
+        catch (...)
+        {
+            return std::nullopt;
+        }
+
+        if (comma == std::string::npos) break;
+        begin = comma + 1;
     }
-    catch (...) { return std::nullopt; }
+    return values;
 }
 
 std::unordered_map<std::string, std::string> loadSimpleYaml(const fs::path &path)
@@ -132,6 +148,9 @@ Config loadConfig(const fs::path &configPath)
     readString("planner", cfg.plannerType);
     std::transform(cfg.plannerType.begin(), cfg.plannerType.end(), cfg.plannerType.begin(), ::tolower);
 
+    readString("robot", cfg.robotType);
+    std::transform(cfg.robotType.begin(), cfg.robotType.end(), cfg.robotType.begin(), ::tolower);
+
     readDouble("solve_time", cfg.solveTime);
     readDouble("range", cfg.range);
     readDouble("goal_bias", cfg.goalBias);
@@ -149,24 +168,23 @@ Config loadConfig(const fs::path &configPath)
 
     readDouble("link1_length", cfg.link1Length);
     readDouble("link2_length", cfg.link2Length);
+    readDouble("link3_length", cfg.link3Length);
     readDouble("link_thickness", cfg.linkThickness);
     readDouble("object_height", cfg.objectHeight);
 
     if (auto startIt = kv.find("start"); startIt != kv.end())
     {
-        if (auto parsed = parseAnglePair(startIt->second))
+        if (auto parsed = parseAngleList(startIt->second))
         {
-            cfg.startTheta1 = parsed->first;
-            cfg.startTheta2 = parsed->second;
+            cfg.startAngles = *parsed;
         }
     }
 
     if (auto goalIt = kv.find("goal"); goalIt != kv.end())
     {
-        if (auto parsed = parseAnglePair(goalIt->second))
+        if (auto parsed = parseAngleList(goalIt->second))
         {
-            cfg.goalTheta1 = parsed->first;
-            cfg.goalTheta2 = parsed->second;
+            cfg.goalAngles = *parsed;
         }
     }
 
@@ -229,13 +247,29 @@ void writeObstacleCsv(const fs::path &path, const std::vector<SquareObstacle> &o
 void writePathCsv(const fs::path &path, const motion_planning_examples::ManifoldPath &manifoldStates)
 {
     std::ofstream out(path);
-    out << "theta1,theta2\n";
+    if (manifoldStates.empty())
+    {
+        out << "\n";
+        return;
+    }
+
+    const std::size_t jointCount = manifoldStates.front().size() / 2;
+    for (std::size_t joint = 0; joint < jointCount; ++joint)
+    {
+        out << "theta" << (joint + 1);
+        if (joint + 1 < jointCount) out << ',';
+    }
+    out << '\n';
+
     for (const auto &state : manifoldStates)
     {
-        // Knowing it's a 2DOF arm for python visualization, we extract the angles
-        double t1 = std::atan2(state[1], state[0]);
-        double t2 = std::atan2(state[3], state[2]);
-        out << t1 << ',' << t2 << '\n';
+        for (std::size_t joint = 0; joint < jointCount; ++joint)
+        {
+            const double angle = convertToAngleSO2({state[2 * joint], state[2 * joint + 1]});
+            out << angle;
+            if (joint + 1 < jointCount) out << ',';
+        }
+        out << '\n';
     }
 }
 
@@ -253,19 +287,49 @@ void writeCollisionMapCsv(const fs::path &path,
     for (int i = 0; i < gridResolution; ++i)
     {
         const double theta1 = -pi + (2.0 * pi * i) / static_cast<double>(gridResolution - 1);
-        manifoldState[0] = std::cos(theta1);
-        manifoldState[1] = std::sin(theta1);
+        const auto joint1 = createFromAngleSO2(theta1);
+        manifoldState[0] = joint1[0];
+        manifoldState[1] = joint1[1];
         
         for (int j = 0; j < gridResolution; ++j)
         {
             const double theta2 = -pi + (2.0 * pi * j) / static_cast<double>(gridResolution - 1);
-            manifoldState[2] = std::cos(theta2);
-            manifoldState[3] = std::sin(theta2);
+            const auto joint2 = createFromAngleSO2(theta2);
+            manifoldState[2] = joint2[0];
+            manifoldState[3] = joint2[1];
 
             const bool valid = checker.isManifoldStateValid(manifoldState);
             out << theta1 << ',' << theta2 << ',' << (valid ? 1 : 0) << '\n';
         }
     }
+}
+
+std::shared_ptr<RobotMechanism> createRobot(const Config &cfg)
+{
+    if (cfg.robotType == "rr_planar_arm")
+    {
+        return std::make_shared<RRPlanarArm>(cfg.link1Length, cfg.link2Length, cfg.linkThickness, cfg.objectHeight);
+    }
+
+    if (cfg.robotType == "rrr_planar_arm")
+    {
+        return std::make_shared<RRRPlanarArm>(cfg.link1Length, cfg.link2Length, cfg.link3Length, cfg.linkThickness, cfg.objectHeight);
+    }
+
+    throw std::invalid_argument("Unknown robot type: " + cfg.robotType);
+}
+
+JointManifoldState makeManifoldState(const std::vector<double> &angles)
+{
+    JointManifoldState state;
+    state.reserve(angles.size() * 2);
+    for (double angle : angles)
+    {
+        const auto joint = createFromAngleSO2(angle);
+        state.push_back(joint[0]);
+        state.push_back(joint[1]);
+    }
+    return state;
 }
 
 }  // namespace
@@ -274,13 +338,15 @@ int main(int argc, char **argv)
 {
     const auto configPath = firstExistingPath({
         argc > 1 ? fs::path(argv[1]) : fs::path(),
-        "config.yaml",
-        "../config.yaml",
+        "rr_planar_arm_config.yaml",
+        "../rr_planar_arm_config.yaml",
+        "rrr_planar_arm_config.yaml",
+        "../rrr_planar_arm_config.yaml",
     });
 
     if (!configPath)
     {
-        std::cerr << "Could not find config.yaml. Pass a path as first argument.\n";
+        std::cerr << "Could not find rr_planar_arm_config.yaml or rrr_planar_arm_config.yaml. Pass a path as first argument.\n";
         return 1;
     }
 
@@ -295,10 +361,24 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    const auto obstacles = generateObstacles(cfg);
+    std::shared_ptr<RobotMechanism> robot;
+    try
+    {
+        robot = createRobot(cfg);
+    }
+    catch (const std::exception &e)
+    {
+        std::cerr << "Robot config error: " << e.what() << '\n';
+        return 1;
+    }
 
-    std::shared_ptr<RobotMechanism> robot = std::make_shared<TwoDOFPlanarArm>(
-        cfg.link1Length, cfg.link2Length, cfg.linkThickness, cfg.objectHeight);
+    if (cfg.startAngles.size() != robot->getJointCount() || cfg.goalAngles.size() != robot->getJointCount())
+    {
+        std::cerr << "Start/goal angle count must match the selected robot's joint count.\n";
+        return 1;
+    }
+
+    const auto obstacles = generateObstacles(cfg);
 
     auto checker = std::make_shared<FCLCollisionChecker>(robot, cfg.objectHeight, obstacles);
     std::shared_ptr<Planner> planner;
@@ -324,10 +404,8 @@ int main(int argc, char **argv)
     }
 
     // Convert input config angles dynamically into the generic manifold representation
-    JointManifoldState startState = {std::cos(cfg.startTheta1), std::sin(cfg.startTheta1), 
-                                     std::cos(cfg.startTheta2), std::sin(cfg.startTheta2)};
-    JointManifoldState goalState = {std::cos(cfg.goalTheta1), std::sin(cfg.goalTheta1), 
-                                    std::cos(cfg.goalTheta2), std::sin(cfg.goalTheta2)};
+    JointManifoldState startState = makeManifoldState(cfg.startAngles);
+    JointManifoldState goalState = makeManifoldState(cfg.goalAngles);
 
     planner->setStartGoal(startState, goalState);
 
@@ -347,7 +425,14 @@ int main(int argc, char **argv)
     const fs::path obstaclesCsv = "obstacles.csv";
 
     writePathCsv(pathCsv, pathManifoldStates);
-    writeCollisionMapCsv(collisionCsv, *checker, cfg.collisionGridResolution);
+    if (robot->getJointCount() == 2)
+    {
+        writeCollisionMapCsv(collisionCsv, *checker, cfg.collisionGridResolution);
+    }
+    else
+    {
+        std::cout << "Skipping 2D collision map export for a non-2DOF robot.\n";
+    }
     writeObstacleCsv(obstaclesCsv, obstacles);
 
     std::cout << "Found solution with " << pathManifoldStates.size() << " states.\n";

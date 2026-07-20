@@ -30,16 +30,18 @@ private:
     
     int numWaypoints_;
 
-    double startX_{0.0};
-    double startY_{0.0};
-    double goalX_{0.0};
-    double goalY_{0.0};
+    std::vector<double> startTaskSpace_;
+    std::vector<double> goalTaskSpace_;
+    std::size_t jointCount_{0};
+    std::size_t taskSpaceDimension_{0};
+    TaskSpaceType taskSpaceType_{TaskSpaceType::Euclidean2D};
 
     JointManifoldState startState_;
     JointManifoldState goalState_;
 
     std::vector<double> v1Path_;
     std::vector<double> v2Path_;
+    std::vector<double> v3Path_;
 };
 
 }  // namespace motion_planning_examples
