@@ -111,7 +111,7 @@ enum class TaskSpaceType
     return normalizeSO2(out);
 }
 
-[[nodiscard]] inline double geodesicDistanceSO2(const SO2Coordinates &a, const SO2Coordinates &b)
+[[nodiscard]] inline double computeGeodesicDistanceSO2(const SO2Coordinates &a, const SO2Coordinates &b)
 {
     const double dot = std::clamp(a[0] * b[0] + a[1] * b[1], -1.0, 1.0);
     return std::acos(dot);

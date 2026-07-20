@@ -200,9 +200,9 @@ JointManifoldState RRRPlanarArm::interpolateManifoldState(const JointManifoldSta
 
 double RRRPlanarArm::computeManifoldDistance(const JointManifoldState& a, const JointManifoldState& b) const
 {
-    const double d1 = geodesicDistanceSO2({a[0], a[1]}, {b[0], b[1]});
-    const double d2 = geodesicDistanceSO2({a[2], a[3]}, {b[2], b[3]});
-    const double d3 = geodesicDistanceSO2({a[4], a[5]}, {b[4], b[5]});
+    const double d1 = computeGeodesicDistanceSO2({a[0], a[1]}, {b[0], b[1]});
+    const double d2 = computeGeodesicDistanceSO2({a[2], a[3]}, {b[2], b[3]});
+    const double d3 = computeGeodesicDistanceSO2({a[4], a[5]}, {b[4], b[5]});
     return std::sqrt(d1 * d1 + d2 * d2 + d3 * d3);
 }
 

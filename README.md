@@ -25,7 +25,7 @@ The backend does not use raw joint angles as its internal state. Revolute joints
 
 - Joint state for a revolute joint: `SO2Coordinates = [c, s]`
 - Current task-space coordinate types: `Euclidean2DCoordinates`, `Euclidean3DCoordinates`, `SE2Coordinates`, `SE3Coordinates`
-- Current function naming convention: verbs first, then the manifold suffix, for example `createFromAngleSO2`, `convertToAngleSO2`, `interpolateSO2`, and `geodesicDistanceSO2`
+- Current function naming convention: verbs first, then the manifold suffix, for example `createFromAngleSO2`, `convertToAngleSO2`, `interpolateSO2`, and `computeGeodesicDistanceSO2`
 - `taskSpaceTypeName` returns capitalized task-space labels such as `SE2` and `SE3`
 
 Scalar angles are only used at boundaries where they are unavoidable, such as config parsing, CSV export, and OMPL's internal `SO2` state assignment.
