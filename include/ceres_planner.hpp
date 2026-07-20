@@ -59,7 +59,7 @@ private:
 
   std::vector<JointPath> jointPaths_;
 
-  bool computeTaskSpaceDirection(std::vector<double>& direction) const;
+  [[nodiscard]] bool computeTaskSpaceDirection(std::vector<double>& direction) const;
   bool initializeWaypoints();
   bool optimizePath(const std::vector<double>& direction, double solveTimeSeconds);
   bool runSolver(ceres::Problem& problem, double solveTimeSeconds) const;
