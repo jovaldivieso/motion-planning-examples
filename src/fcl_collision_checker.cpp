@@ -3,50 +3,50 @@
 namespace motion_planning_examples
 {
 
-FCLCollisionChecker::FCLCollisionChecker(std::shared_ptr<RobotMechanism> arm,
-                                         double objectHeight,
+FCLCollisionChecker::FCLCollisionChecker(std::shared_ptr<RobotMechanism> arm, double objectHeight,
                                          const std::vector<SquareObstacle>& obstacles)
-    : arm_(std::move(arm))
+  : arm_(std::move(arm))
 {
-    // Pre-allocate the exact capacity needed based on the robot's collision bodies
-    fkTransformsCache_.reserve(arm_->getCollisionGeometries().size());
+  // Pre-allocate the exact capacity needed based on the robot's collision bodies
+  fkTransformsCache_.reserve(arm_->getCollisionGeometries().size());
 
-    for (const auto& obstacle : obstacles)
-    {
-        auto geometry = std::make_shared<fcl::Boxd>(obstacle.size, obstacle.size, objectHeight);
-        fcl::Transform3d transform = fcl::Transform3d::Identity();
-        transform.translation() << obstacle.cx, obstacle.cy, 0.0;
-        obstacleObjects_.emplace_back(geometry, transform);
-    }
+  for (const auto& obstacle : obstacles)
+  {
+    auto geometry = std::make_shared<fcl::Boxd>(obstacle.size, obstacle.size, objectHeight);
+    fcl::Transform3d transform = fcl::Transform3d::Identity();
+    transform.translation() << obstacle.cx, obstacle.cy, 0.0;
+    obstacleObjects_.emplace_back(geometry, transform);
+  }
 }
 
-bool FCLCollisionChecker::isManifoldStateValid(const JointManifoldState &state) const
+bool FCLCollisionChecker::isManifoldStateValid(const JointManifoldState& state) const
 {
-    fkTransformsCache_.clear();
-    arm_->computeForwardKinematics(state, fkTransformsCache_);
+  fkTransformsCache_.clear();
+  arm_->computeForwardKinematics(state, fkTransformsCache_);
 
-    auto geometries = arm_->getCollisionGeometries();
+  auto geometries = arm_->getCollisionGeometries();
 
-    for (std::size_t i = 0; i < fkTransformsCache_.size(); ++i)
+  for (std::size_t i = 0; i < fkTransformsCache_.size(); ++i)
+  {
+    fcl::CollisionObjectd link(geometries[i], fkTransformsCache_[i]);
+    for (const auto& obstacle : obstacleObjects_)
     {
-        fcl::CollisionObjectd link(geometries[i], fkTransformsCache_[i]);
-        for (const auto &obstacle : obstacleObjects_)
-        {
-            if (inCollision(link, obstacle))
-            {
-                return false;
-            }
-        }
+      if (inCollision(link, obstacle))
+      {
+        return false;
+      }
     }
-    return true;
+  }
+  return true;
 }
 
-bool FCLCollisionChecker::inCollision(const fcl::CollisionObjectd& a, const fcl::CollisionObjectd& b)
+bool FCLCollisionChecker::inCollision(const fcl::CollisionObjectd& a,
+                                      const fcl::CollisionObjectd& b)
 {
-    fcl::CollisionRequestd request;
-    request.num_max_contacts = 1;
-    fcl::CollisionResultd result;
-    return fcl::collide(&a, &b, request, result) > 0;
+  fcl::CollisionRequestd request;
+  request.num_max_contacts = 1;
+  fcl::CollisionResultd result;
+  return fcl::collide(&a, &b, request, result) > 0;
 }
 
 }  // namespace motion_planning_examples
